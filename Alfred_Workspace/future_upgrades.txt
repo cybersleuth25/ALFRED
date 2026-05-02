@@ -23,7 +23,10 @@
 - Anti-Hallucination System Prompt (Never fabricate info, admit uncertainty honestly)
 - UI/UX Overhaul (Weather panel, live transcript, clock, ambient state glow, no fake data)
 - Multi-User Profiles (User identification by Telegram ID with isolated memories)
-
+- Local Computer Vision Engine (Offline YOLOv8 object detection via webcam)
+- Dynamic Skill Engine (Alfred writes and injects custom Python code on the fly to learn new skills)
+- Self-Correcting ReAct Loop (Catches tool errors and self-corrects reasoning autonomously)
+- Advanced Conversational Memory (RAG Vector Database for semantic facts and context)
 ---
 
 ### PENDING UPGRADES
@@ -41,3 +44,24 @@
 
 4. **VOICE CLONING (Custom Butler Voice)**
    - *Upgrade needed:* Train a custom voice model using Coqui XTTS v2 with a public domain butler voice reference clip. Currently deferred due to VRAM constraints (RTX 3050 4GB). When hardware permits, swap XTTS as the TTS backend for a perfectly personalized voice.
+
+5. **MULTI-AGENT RAG SWARM**
+   - *Upgrade needed:* Introduce specialized "researcher" agents that can concurrently scrape multiple deep-web and surface-web sources, compile the data, and summarize it into a singular brief. Currently, Alfred relies on linear OSINT scraping.
+
+6. **DOCKERIZED SKILL SANDBOX**
+   - *Upgrade needed:* Move the new Dynamic Skill Engine into an isolated Docker container. This will allow Alfred to safely write, compile, and test highly complex (and potentially dangerous) Python scripts without risking the host machine's integrity.
+
+7. **PHYSICAL HARDWARE INTEGRATION (Robotics/Drones)**
+   - *Upgrade needed:* Connect Alfred to local hardware APIs (e.g., DJI SDK or Arduino serial ports). Use the Dynamic Skill Engine to allow Alfred to teach himself how to fly a drone or control robotic arms purely via natural language commands.
+
+8. **INFINITE DESKTOP MEMORY (Screen-Pipe OCR)**
+   - *Upgrade needed:* A background daemon that takes a low-res screenshot of the computer every 5 seconds, extracts the text using OCR, and saves it to a Vector Database. Allows the user to ask questions like "What was that jacket I looked at on Amazon last Tuesday?" and have Alfred instantly recall the screen context.
+
+9. **AUTONOMOUS DESKTOP CONTROL (PyAutoGUI + Vision)**
+   - *Upgrade needed:* Give Alfred a "Keyboard & Mouse Agent." By combining the Local Vision engine with screen coordinates and PyAutoGUI, Alfred can literally take over the mouse to navigate UI menus, delete spam emails, or even play games alongside the user.
+
+10. **EMOTIONAL & RESPONSIVE VOICE (Kokoro TTS)**
+    - *Upgrade needed:* Replace the static Windows Edge TTS with an emotional TTS engine (like Kokoro). Alfred's voice tone will dynamically change based on context—sounding urgent during security alerts, relaxed during casual chats, or disappointed if the user breaks Protocol Omega.
+
+11. **SMART MIRROR UI MODE**
+    - *Upgrade needed:* Create a secondary, high-contrast, minimalist black-and-white theme for the React Dashboard. This allows the dashboard to be deployed on a Raspberry Pi behind a two-way mirror, creating a physical "Smart Mirror" that wakes up via facial recognition when the user looks at it.

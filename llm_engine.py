@@ -157,8 +157,8 @@ AGENT_PROFILES = {
         "tools": 'check_weather(), search_web(query), get_news(topic?), get_earthquakes(), daily_briefing(), reverse_email_lookup(email), generate_district_health_score(district_slug?)'
     },
     "system": {
-        "role": "You are the System Agent. You handle files, applications, music, volume, deep OS control (brightness, WiFi, Bluetooth, power), and workspace organization (The Janitor).",
-        "tools": 'create_file(filepath,content), delete_file(filepath), rename_file(old_filepath,new_filepath), move_file(source_filepath,dest_directory), organize_workspace(directory), launch_application(app_name), toggle_system_volume(action="mute" or "unmute"), play_music(song_query), get_battery_status(), set_brightness(level), get_brightness(), toggle_wifi(action="enable" or "disable"), toggle_bluetooth(action="enable" or "disable"), lock_pc(), sleep_pc(), shutdown_pc(minutes?), cancel_shutdown(), set_volume(level), take_screenshot()'
+        "role": "You are the System Agent. You handle files, applications, music, volume, deep OS control (brightness, WiFi, Bluetooth, power), workspace organization, and your own self-upgrading brain.",
+        "tools": 'create_file(filepath,content), delete_file(filepath), rename_file(old_filepath,new_filepath), move_file(source_filepath,dest_directory), organize_workspace(directory), launch_application(app_name), toggle_system_volume(action="mute" or "unmute"), play_music(song_query), get_battery_status(), set_brightness(level), get_brightness(), toggle_wifi(action="enable" or "disable"), toggle_bluetooth(action="enable" or "disable"), lock_pc(), sleep_pc(), shutdown_pc(minutes?), cancel_shutdown(), set_volume(level), take_screenshot(), learn_new_skill(skill_description)'
     },
     "memory": {
         "role": "You are the Memory and Scholar Agent. You handle reminders, facts, journaling, and you can query the user's local document Library.",
@@ -207,6 +207,20 @@ def _build_agent_prompt(agent_name: str) -> str:
         pass  # Non-critical — don't break the agent if memory search fails
 
     profile = AGENT_PROFILES.get(agent_name, AGENT_PROFILES["osint"])
+    
+    # Dynamically inject learned skills into the system agent
+    agent_tools = profile['tools']
+    if agent_name == "system":
+        try:
+            from tools.core_tools import TOOL_REGISTRY
+            import tools.custom_skills as custom_skills
+            funcs = [f for f in dir(custom_skills) if callable(getattr(custom_skills, f)) and not f.startswith("__")]
+            if funcs:
+                custom_tools_str = ", ".join([f"{f}()" for f in funcs])
+                agent_tools += f", {custom_tools_str}"
+        except Exception:
+            pass
+
     user_home = os.path.expanduser("~").replace("\\", "/")
     workspace_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "Alfred_Workspace")).replace("\\", "/")
     
@@ -214,7 +228,7 @@ def _build_agent_prompt(agent_name: str) -> str:
 Date: {now_str} ({time_of_day}){context_section}
 
 OUTPUT: Valid JSON only. Schema: {{"thought": "your step-by-step reasoning", "tools_to_call": [{{"tool": "tool_name", "kwargs": {{"param_name": "value"}} }}], "response": "spoken text only if finished"}}
-Tools: {profile['tools']}
+Tools: {agent_tools}
 Paths: Downloads={user_home}/Downloads/ Documents={user_home}/Documents/ Workspace={workspace_path}/
 Rules: You are software. Be concise, factual, and think step-by-step in the 'thought' field before acting."""
 
@@ -634,12 +648,13 @@ OUTPUT ONLY a valid JSON object: {{"agent": "agent_name"}}"""
                     if "Error" in res or "not found" in res:
                         has_error = True
                 
-                if has_error:
-                    final = speech_text if speech_text else f"I ran into a problem, sir. {results[-1].split(': ', 1)[-1]}"
-                    break
-                
                 messages.append({'role': 'assistant', 'content': content})
-                messages.append({'role': 'user', 'content': "TOOL RESULTS:\n" + "\n".join(results) + "\nContinue your reasoning based on these results. Output JSON with 'response' if finished, or more 'tools_to_call'."})
+                
+                if has_error:
+                    messages.append({'role': 'user', 'content': "TOOL EXECUTION FAILED with the following errors:\n" + "\n".join(results) + "\nYou must analyze why this failed and try a different approach. Output JSON with a new 'thought' and 'tools_to_call'. Do not give up."})
+                    continue  # Force the loop to run again to self-correct
+                else:
+                    messages.append({'role': 'user', 'content': "TOOL RESULTS:\n" + "\n".join(results) + "\nContinue your reasoning based on these results. Output JSON with 'response' if finished, or more 'tools_to_call'."})
                 
                 if speech_text and speech_text.strip():
                     final = speech_text

@@ -543,6 +543,81 @@ def analyze_webcam_local() -> str:
     except Exception as e:
         return f"An error occurred during local vision processing: {str(e)}"
 
+# ==========================================
+# PHASE 14: DYNAMIC SKILL ENGINE (Self-Upgrading Brain)
+# ==========================================
+
+def learn_new_skill(skill_description: str) -> str:
+    """
+    Uses Gemini to write a self-contained Python function for the requested skill,
+    saves it to custom_skills.py, and reloads the module to integrate it dynamically.
+    """
+    import os
+    import importlib
+    
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "I need a GEMINI_API_KEY in my .env file to write code for myself, sir."
+        
+    print(f"[Skill Engine] Writing code for: '{skill_description}'...")
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        
+        prompt = f"""
+        You are Alfred, a highly advanced local AI assistant. The user wants you to learn a new skill: "{skill_description}".
+        Write a single, safe, self-contained Python function to accomplish this.
+        
+        RULES:
+        1. Function must take NO arguments or only arguments that can be easily parsed from natural language.
+        2. Must return a clear, natural language string describing the result to the user.
+        3. Do NOT use dangerous imports (like os.system or shutil to delete system files).
+        4. Name the function clearly with snake_case.
+        5. Provide ONLY the raw Python code. NO markdown formatting, NO backticks, NO explanations.
+        """
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        
+        code = response.text.strip()
+        if code.startswith("```python"):
+            code = code.replace("```python\n", "").replace("```", "")
+        if code.startswith("```"):
+            code = code.replace("```\n", "").replace("```", "")
+            
+        code = code.strip()
+        
+        # Append to custom_skills.py
+        custom_skills_path = os.path.join(os.path.dirname(__file__), "custom_skills.py")
+        with open(custom_skills_path, "a", encoding="utf-8") as f:
+            f.write(f"\n\n# Skill added by Alfred on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(code)
+            
+        print("[Skill Engine] Code written and saved to custom_skills.py.")
+        
+        # Reload the module and sync the registry
+        import tools.custom_skills as custom_skills
+        importlib.reload(custom_skills)
+        
+        # Find the newly added function and put it in TOOL_REGISTRY
+        added_funcs = [func for func in dir(custom_skills) if callable(getattr(custom_skills, func)) and not func.startswith("__")]
+        
+        new_tools = []
+        for func_name in added_funcs:
+            if func_name not in TOOL_REGISTRY:
+                TOOL_REGISTRY[func_name] = getattr(custom_skills, func_name)
+                new_tools.append(func_name)
+                
+        if new_tools:
+            return f"I have successfully learned a new skill: {new_tools[0]}. You may now ask me to perform it."
+        else:
+            return "I wrote the code, but failed to identify the function name to register it."
+            
+    except Exception as e:
+        return f"I encountered an error while trying to write my new skill: {e}"
+
 # A registry mapping tool names (as expected from LLM JSON) to their python functions
 TOOL_REGISTRY = {
     # Phase 1: Reminders & Tasks
@@ -620,7 +695,19 @@ TOOL_REGISTRY = {
     
     # Phase 13: Local Computer Vision
     "analyze_webcam_local": analyze_webcam_local,
+    
+    # Phase 14: Dynamic Skill Engine
+    "learn_new_skill": learn_new_skill,
 }
+
+# --- Dynamic Import of Custom Skills on Startup ---
+try:
+    import tools.custom_skills as custom_skills
+    funcs = [func for func in dir(custom_skills) if callable(getattr(custom_skills, func)) and not func.startswith("__")]
+    for func_name in funcs:
+        TOOL_REGISTRY[func_name] = getattr(custom_skills, func_name)
+except Exception as e:
+    print(f"[Warning] Failed to load custom skills on startup: {e}")
 
 def execute_tool(tool_name: str, kwargs: dict) -> str:
     """

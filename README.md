@@ -6,10 +6,14 @@ Alfred is an advanced, fully offline, multi-agent AI personal assistant built in
 
 *   **Multi-Agent LLM Orchestration:** A Manager Agent delegates tasks dynamically to specialized sub-agents (System, Memory, Browser, OSINT, Communications), executing complex multi-step workflows with strict JSON schemas.
 *   **Zero-Latency Voice Architecture:** Custom "fast-path" intent detection bypasses LLM inference for common hardware commands. Features continuous offline wake-word detection (Vosk) and interruptible Text-to-Speech playback.
-*   **Persistent Semantic Memory (RAG):** Uses vector embeddings (`nomic-embed-text`) and cosine similarity search backed by SQLite to organically recall past conversations, facts, and tasks with high contextual relevance.
+*   **Dynamic Skill Engine (Self-Upgrading):** Alfred has the ability to write his own Python functions on the fly via LLM and dynamically inject them into his running `ReAct` loop to learn physical skills.
+*   **Self-Correcting ReAct Loop:** Intelligent tool error handling. If a tool fails, Alfred automatically injects the stack trace back into his context to self-correct and try a new parameter/approach.
+*   **Local Computer Vision Engine:** Offline YOLOv8 object detection runs efficiently by borrowing the background security daemon's camera frame, avoiding hardware contention.
+*   **Persistent Semantic Memory (RAG):** Uses vector embeddings (`nomic-embed-text`) and cosine similarity search backed by SQLite to organically recall past conversations, facts, and tasks.
 *   **Biometric Security Engine:** Integrates ONNX computer vision models (Yunet for face detection, SFace for face recognition) alongside voice biometrics to monitor system access and enforce screen locking.
 *   **Protocol Omega (Productivity Mode):** An automated study mode utilizing background computer vision daemons to track user focus, block distracting applications, and dynamically generate post-session performance briefings.
-*   **Deep OS & Hardware Control:** Natively interacts with Windows APIs to control power states (lock, sleep, shutdown), adjust brightness, toggle WiFi/Bluetooth, and manage local media (Spotify OAuth integration).
+*   **Deep OS & Hardware Control:** Natively interacts with Windows APIs to control power states (lock, sleep, shutdown), adjust brightness, toggle WiFi/Bluetooth, and manage local media.
+*   **Full React Dashboard:** A complete GUI command center built with React, Vite, and Three.js for real-time visualization of Alfred's logs, system telemetry, and OSINT data streams.
 *   **Cross-Platform Mobile Link:** Integrated Telegram Bot running concurrently in an `asyncio` event loop for secure, remote hardware control and push notifications.
 
 ## ⚙️ Architecture
