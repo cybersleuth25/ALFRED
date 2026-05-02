@@ -1,0 +1,42 @@
+# Environment variables and secrets
+.env
+
+# SQLite databases (personal conversation history, facts, tasks)
+alfred_memory.db
+*.db
+
+# Biometric and security data
+authorized_face.jpg
+authorized_face.json
+authorized_voice.json
+
+# Model files (too large for git)
+*.pt
+*.onnx
+vosk-model-*/
+vosk_model/
+vosk_spk/
+
+# Python caches and virtual environments
+__pycache__/
+*.pyc
+venv/
+env/
+.venv/
+
+# IDE/OS specific files
+.vscode/
+.idea/
+.DS_Store
+
+# Graphify knowledge graph output
+graphify-out/
+
+# Temporary files, scratch pads, and test scripts
+scratch_models.txt
+tasks.json
+test_mic.py
+test_tracker2.py
+test_yolo.py
+list_models.py
+download_vosk.py

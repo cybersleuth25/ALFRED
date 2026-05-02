@@ -1,0 +1,422 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400&display=swap');
+@import "tailwindcss";
+
+/* ============================================================
+   ALFRED PROTOCOL — DESIGN SYSTEM
+   Classified Intelligence Terminal × Luxury Dashboard
+   ============================================================ */
+
+:root {
+  --accent-cyan: #00e8c6;
+  --accent-amber: #ffaa00;
+  --accent-blue: #7b8cde;
+  --accent-red: #ff4466;
+  --accent-purple: #a78bfa;
+  --surface-primary: rgba(255, 255, 255, 0.025);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-hover: rgba(255, 255, 255, 0.12);
+  --text-primary: rgba(255, 255, 255, 0.85);
+  --text-secondary: rgba(255, 255, 255, 0.50);
+  --text-muted: rgba(255, 255, 255, 0.25);
+  --text-ghost: rgba(255, 255, 255, 0.12);
+}
+
+/* ── Global Reset & Base ── */
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: #020204;
+  color: #ffffff;
+  font-family: 'Outfit', -apple-system, sans-serif;
+  letter-spacing: 0.04em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Typography Utilities ── */
+.font-mono {
+  font-family: 'JetBrains Mono', 'Consolas', monospace !important;
+}
+.label {
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 300;
+}
+.value {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 300;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Layered Cinematic Background ── */
+.bg-cinematic {
+  background:
+    radial-gradient(ellipse at 50% 35%, rgba(8, 10, 24, 1) 0%, rgba(2, 2, 4, 1) 100%);
+  position: relative;
+}
+
+/* Subtle animated grain texture */
+.bg-cinematic::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.015'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+  pointer-events: none;
+  z-index: 1;
+  animation: grainDrift 8s linear infinite;
+}
+
+/* Vignette border */
+.bg-cinematic::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.5) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes grainDrift {
+  0% { transform: translate(0, 0); }
+  50% { transform: translate(-3px, 2px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* ── Glassmorphism Panels — Redesigned ── */
+.glass-panel {
+  background: rgba(20, 25, 45, 0.15); /* Slightly brighter tinted base */
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.1); /* Brighter border */
+  border-radius: 16px;
+  padding: 20px 24px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 0 20px rgba(255, 255, 255, 0.02);
+}
+
+/* Top accent line — colored by panel type */
+.glass-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+}
+
+/* Corner brackets — top-left and bottom-right */
+.glass-panel::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+
+.glass-panel:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+  box-shadow:
+    0 15px 50px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 30px rgba(255, 255, 255, 0.05),
+    0 0 40px rgba(0, 0, 0, 0.2);
+}
+
+/* Panel accent variants with stronger glows */
+.glass-panel.accent-cyan::before {
+  background: linear-gradient(90deg, transparent, rgba(0, 232, 198, 0.4), transparent);
+  box-shadow: 0 2px 20px rgba(0, 232, 198, 0.2);
+}
+.glass-panel.accent-amber::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 170, 0, 0.4), transparent);
+  box-shadow: 0 2px 20px rgba(255, 170, 0, 0.2);
+}
+.glass-panel.accent-blue::before {
+  background: linear-gradient(90deg, transparent, rgba(123, 140, 222, 0.4), transparent);
+  box-shadow: 0 2px 20px rgba(123, 140, 222, 0.2);
+}
+.glass-panel.accent-purple::before {
+  background: linear-gradient(90deg, transparent, rgba(167, 139, 250, 0.4), transparent);
+  box-shadow: 0 2px 20px rgba(167, 139, 250, 0.2);
+}
+
+/* ── Buttons ── */
+button {
+  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  cursor: pointer;
+}
+button:hover {
+  background-color: var(--surface-hover) !important;
+  border-color: var(--border-hover) !important;
+}
+
+/* ── Inputs ── */
+input::placeholder {
+  color: var(--text-muted);
+  font-weight: 200;
+  letter-spacing: 0.1em;
+}
+
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes gentlePulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.4; }
+}
+.animate-gentle-pulse {
+  animation: gentlePulse 2.5s ease-in-out infinite;
+}
+
+/* Scanline sweep across panels */
+@keyframes scanline {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+.glass-panel .scanline-effect {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.015), transparent);
+  animation: scanline 12s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Data value update flicker */
+@keyframes dataFlicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.data-update {
+  animation: dataFlicker 0.3s ease-out;
+}
+
+/* Breathing glow for status indicators */
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 4px currentColor; }
+  50% { box-shadow: 0 0 12px currentColor; }
+}
+.status-breathe {
+  animation: breathe 3s ease-in-out infinite;
+}
+
+/* ============================================================
+   SENTINEL STYLES (3D Crystal Overlay)
+   ============================================================ */
+
+.sentinel-caption {
+  color: rgba(200, 220, 255, 0.85);
+  text-shadow: 0 0 10px rgba(180, 190, 255, 0.3), 0 0 20px rgba(180, 190, 255, 0.1);
+  letter-spacing: 0.08em;
+  animation: sentinelGlow 4s ease-in-out infinite, hologramGlitch 8s infinite;
+}
+
+/* Styled quote marks via CSS */
+.sentinel-caption::before {
+  content: '\201C';
+  color: rgba(100, 150, 255, 0.35);
+  font-size: 1.3em;
+  margin-right: 0.15em;
+  vertical-align: -0.05em;
+}
+.sentinel-caption::after {
+  content: '\201D';
+  color: rgba(100, 150, 255, 0.35);
+  font-size: 1.3em;
+  margin-left: 0.15em;
+  vertical-align: -0.05em;
+}
+
+/* Decorative rules above/below caption */
+.caption-container {
+  position: relative;
+  padding: 16px 0;
+}
+.caption-container::before,
+.caption-container::after {
+  content: '';
+  display: block;
+  width: 80px;
+  height: 1px;
+  margin: 0 auto 12px;
+  background: linear-gradient(90deg, transparent, rgba(180, 190, 255, 0.2), transparent);
+}
+.caption-container::after {
+  margin: 12px auto 0;
+}
+
+@keyframes sentinelGlow {
+  0%, 100% { text-shadow: 0 0 10px rgba(180, 190, 255, 0.3); }
+  50% { text-shadow: 0 0 15px rgba(180, 190, 255, 0.5), 0 0 30px rgba(180, 190, 255, 0.2); }
+}
+
+@keyframes hologramGlitch {
+  0%, 98%, 100% { opacity: 1; transform: scale(1); }
+  98.5% { opacity: 0.4; transform: scale(0.98) skewX(2deg); }
+  99% { opacity: 0.8; transform: scale(1.02) skewX(-2deg); filter: hue-rotate(10deg); }
+  99.5% { opacity: 0.3; transform: scale(0.99); }
+}
+
+.sentinel-watermark {
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.1) 50%, rgba(255,255,255,0));
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: 0 0 20px rgba(255,255,255,0.05);
+  opacity: 0.7;
+}
+
+/* ============================================================
+   SCROLLBARS — Global
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 3px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ============================================================
+   DATA VISUALIZATION
+   ============================================================ */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress bar gradients with glowing edge */
+.bar-gradient-normal {
+  background: linear-gradient(90deg, rgba(0, 200, 200, 0.4), rgba(0, 232, 198, 0.6));
+  box-shadow: 2px 0 8px rgba(0, 232, 198, 0.3);
+}
+.bar-gradient-warn {
+  background: linear-gradient(90deg, rgba(250, 200, 50, 0.4), rgba(255, 170, 0, 0.7));
+  box-shadow: 2px 0 8px rgba(255, 170, 0, 0.3);
+}
+.bar-gradient-danger {
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.5), rgba(255, 68, 102, 0.8));
+  box-shadow: 2px 0 8px rgba(255, 68, 102, 0.3);
+}
+
+/* Section header with extending line */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.section-header span {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 300;
+  white-space: nowrap;
+}
+.section-header::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.06), transparent);
+}
+
+/* Alternating row backgrounds */
+.row-alt {
+  transition: all 0.2s ease;
+  border-radius: 4px;
+}
+.row-alt:nth-child(even) {
+  background: rgba(255, 255, 255, 0.015);
+}
+.row-alt:hover {
+  background: rgba(255, 255, 255, 0.04);
+  transform: translateX(2px);
+}
+
+/* Equalizer bars animation (for Spotify) */
+.eq-bar {
+  display: inline-block;
+  width: 2px;
+  margin: 0 1px;
+  background: var(--accent-cyan);
+  border-radius: 1px;
+  animation: eqBounce 0.8s ease-in-out infinite;
+}
+.eq-bar:nth-child(1) { height: 8px; animation-delay: 0s; }
+.eq-bar:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+.eq-bar:nth-child(3) { height: 6px; animation-delay: 0.3s; }
+.eq-bar:nth-child(4) { height: 10px; animation-delay: 0.1s; }
+
+@keyframes eqBounce {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1); }
+}
+
+/* Readout grid background */
+.readout-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 20px 20px;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+/* CSS triangle indicators */
+.tri-up {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-bottom: 5px solid currentColor;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+.tri-down {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 5px solid currentColor;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+
+/* Left accent border for alerts/advisories */
+.alert-border {
+  border-left: 2px solid;
+  padding-left: 12px;
+  border-radius: 0 8px 8px 0;
+}

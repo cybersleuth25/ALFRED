@@ -1,0 +1,43 @@
+# ALFRED PROTOCOL
+### FUTURE UPGRADE ROADMAP 
+
+✅ **REACHED MILESTONES:**
+- Multi-modal Vision (Webcam & Screen content analysis via Protocol Omega)
+- External Web Searching (Google/Wikipedia scraping)
+- App Launching (Spotify, VS Code, Browser via tool commands)
+- Proactive Autonomy (Protocol Omega daemon runs in background without prompting)
+- Particle & Hologram UI (React-Three-Fiber visualizer)
+- Auto-boot integration (Starts silently on Windows launch)
+- Deep OS Control (Brightness, WiFi, Bluetooth, Battery, Lock, Sleep, Shutdown, Volume, Screenshot)
+- Web Browser Tab Control (CDP-based: list, switch, close, open, read tabs in Chrome/Edge/Brave)
+- Mobile Integration (Telegram Bot: remote commands, /status, /screenshot, photo analysis via Gemini)
+- Semantic Memory Engine (Vector embeddings via nomic-embed-text — Alfred remembers conversations organically)
+- Multi-Agent Orchestration (Manager → OSINT/System/Memory/Communications/Browser sub-agents)
+- Proactive Mobile Alerts (Battery warnings, reminders, and Protocol Omega scolds pushed to phone)
+- British Butler Voice (en-GB-RyanNeural — refined, natural, human-like neural voice)
+- Hardened System Tools (pycaw volume, WiFi retry, brightness verification, screenshot fallbacks)
+- Fuzzy Browser Tab Matching (smart scoring instead of first-match)
+- Persistent Conversation Memory (SQLite-backed — Alfred remembers across terminal restarts)
+- Location-Aware Weather (Chikkamagaluru hardcoded in .env, no IP guessing)
+- Real Startup Briefing (Live weather, rain advisory, pending tasks, top headline on first wake)
+- Anti-Hallucination System Prompt (Never fabricate info, admit uncertainty honestly)
+- UI/UX Overhaul (Weather panel, live transcript, clock, ambient state glow, no fake data)
+- Multi-User Profiles (User identification by Telegram ID with isolated memories)
+
+---
+
+### PENDING UPGRADES
+
+1. **SMART HOME HUB (IoT Integration)**
+   - *Upgrade needed:* Connect Alfred to local Wi-Fi smart plugs/lights (like Philips Hue or Tuya). Allow voice commands to dim physical room lights before "Sleep Mode" or "Protocol Omega".
+
+2. **BRAIN UPGRADE (When purchasing new hardware)**
+   - Swap the current model for a highly-advanced offline 14B or 30B reasoning model (like Qwen 2.5 or Llama-3) by simply altering the `ollama.chat` parameter in `llm_engine.py`. This will massively boost his coding and logic comprehension.
+
+3. **THE MIXTRAL JUMP (Hardware Permitting)**
+   - Upgrade the core engine to **Mixtral 8x7B** (an advanced Mixture of Experts model).
+   - *Why:* The MoE architecture is perfect for Alfred's `ReAct` Loop logic schema. It runs exceptionally fast because it only activates subset neural experts at a time, but provides 47-Billion parameter reasoning levels.
+   - *Requirement:* A new laptop with 24GB to 32GB+ of Unified RAM/VRAM to confidently fit the model weights.
+
+4. **VOICE CLONING (Custom Butler Voice)**
+   - *Upgrade needed:* Train a custom voice model using Coqui XTTS v2 with a public domain butler voice reference clip. Currently deferred due to VRAM constraints (RTX 3050 4GB). When hardware permits, swap XTTS as the TTS backend for a perfectly personalized voice.

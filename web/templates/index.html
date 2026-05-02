@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alfred Protocol</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Globe.GL for 3D Earth visualization (explicit https) -->
+    <script src="https://cdn.jsdelivr.net/npm/globe.gl"></script>
+</head>
+<body>
+    <div class="app-shell">
+        <!-- Ambient Background Glow -->
+        <div class="ambient-glow" id="ambient-glow"></div>
+
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="brand">
+                <div class="status-dot" id="status-dot"></div>
+                <span class="brand-name">ALFRED</span>
+                <span class="brand-tag">v3.0</span>
+            </div>
+            <div class="header-controls">
+                <!-- Globe Toggle Button (no emoji) -->
+                <button class="globe-btn" id="globe-btn" title="World View">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                </button>
+                <div class="focus-pill" id="focus-pill">
+                    <span>FOCUS</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="focus-toggle">
+                        <span class="toggle-track"></span>
+                    </label>
+                </div>
+            </div>
+        </header>
+
+        <!-- VIEW 1: Default Orb View -->
+        <div class="view-container" id="view-orb">
+            <section class="orb-section">
+                <div class="orb-wrapper" id="orb-wrapper">
+                    <div class="orb-glow" id="orb-glow"></div>
+                    <canvas id="orb-canvas" width="220" height="220"></canvas>
+                    <div class="orb-ring ring-1"></div>
+                    <div class="orb-ring ring-2"></div>
+                    <div class="orb-ring ring-3"></div>
+                </div>
+                <div class="state-label" id="state-label">INITIALIZING</div>
+            </section>
+            <section class="conversation-section">
+                <div class="conversation-feed" id="conversation-feed">
+                    <div class="msg msg-system">
+                        <span class="msg-icon">SYS</span>
+                        <span class="msg-text">Establishing neural link...</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- VIEW 2: Globe Intelligence View -->
+        <div class="view-container view-hidden" id="view-globe">
+            <div class="globe-header">
+                <span class="globe-title">GLOBAL INTELLIGENCE</span>
+                <div class="globe-stats" id="globe-stats">Loading data...</div>
+            </div>
+            <div class="globe-container" id="globe-container">
+                <div class="globe-loading" id="globe-loading">Initializing WebGL Globe...</div>
+            </div>
+            <div class="globe-legend">
+                <span class="legend-item"><span class="dot-red"></span> Earthquakes</span>
+                <span class="legend-item"><span class="dot-cyan"></span> Intel Points</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/script.js"></script>
+    <script src="/static/js/globe.js"></script>
+</body>
+</html>
