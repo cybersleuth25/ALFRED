@@ -23,6 +23,7 @@ __pycache__/
 venv/
 env/
 .venv/
+Alfred_Workspace/contacts.json
 
 # IDE/OS specific files
 .vscode/
