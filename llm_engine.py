@@ -30,7 +30,7 @@ core_tools.TOOL_REGISTRY["recall_memories"] = lambda query="": __import__('llm_e
 from dotenv import load_dotenv
 load_dotenv()
 USER_NAME = os.getenv("ALFRED_USER_NAME", "User")
-MODEL = "qwen2.5-coder:3b"
+MODEL = "qwen3:4b"
 
 # --- Performance: Preload model on import ---
 def _warm_up_model():
@@ -153,16 +153,16 @@ def _get_time_of_day() -> str:
 # --- System Prompt & Multi-Agent Defs ---
 AGENT_PROFILES = {
     "osint": {
-        "role": "You are the OSINT Agent. You handle web searching, news, weather, real-world data, local civic data, and reverse email lookups.",
-        "tools": 'check_weather(), search_web(query), get_news(topic?), get_earthquakes(), daily_briefing(), reverse_email_lookup(email), generate_district_health_score(district_slug?)'
+        "role": "You are the OSINT Agent. You handle web searching, fetching URLs, news, weather, real-world data, local civic data, reverse email lookups, and Multi-Agent deep swarm research.",
+        "tools": 'check_weather(), search_web(query), get_news(topic?), get_earthquakes(), daily_briefing(), reverse_email_lookup(email), generate_district_health_score(district_slug?), stealth_fetch_url(url), deep_research_swarm(topic)'
     },
     "system": {
-        "role": "You are the System Agent. You handle files, applications, music, volume, deep OS control (brightness, WiFi, Bluetooth, power), workspace organization, and your own self-upgrading brain.",
-        "tools": 'create_file(filepath,content), delete_file(filepath), rename_file(old_filepath,new_filepath), move_file(source_filepath,dest_directory), organize_workspace(directory), launch_application(app_name), toggle_system_volume(action="mute" or "unmute"), play_music(song_query), get_battery_status(), set_brightness(level), get_brightness(), toggle_wifi(action="enable" or "disable"), toggle_bluetooth(action="enable" or "disable"), lock_pc(), sleep_pc(), shutdown_pc(minutes?), cancel_shutdown(), set_volume(level), take_screenshot(), learn_new_skill(skill_description)'
+        "role": "You are the System Agent. You have full physical control over the desktop (mouse/keyboard) and you CAN see the screen using your analyze_screen tool. YOU MUST USE YOUR TOOLS. If asked to look at the screen, ALWAYS call analyze_screen. If asked to type or press keys, use keyboard_type or keyboard_press.",
+        "tools": 'create_file(filepath,content), delete_file(filepath), rename_file(old,new), move_file(src,dest), organize_workspace(dir), launch_application(app), toggle_system_volume(action), play_music(song), get_battery_status(), set_brightness(level), toggle_wifi(action), toggle_bluetooth(action), lock_pc(), sleep_pc(), shutdown_pc(), set_volume(level), take_screenshot(), analyze_screen(query), get_screen_info(), mouse_move_and_click(x,y,button,double_click), keyboard_type(text,press_enter), keyboard_press(key), keyboard_hotkey(key1,key2), learn_new_skill(skill)'
     },
     "memory": {
-        "role": "You are the Memory and Scholar Agent. You handle reminders, facts, journaling, and you can query the user's local document Library.",
-        "tools": 'set_dynamic_reminder(minutes,topic), add_reminder(task,deadline?), list_reminders(), complete_reminder(task_id), delete_reminder(task_id), clear_all_reminders(), remember_fact(fact), forget_fact(fact_id), journal_entry(content), read_journal(), query_library(query)'
+        "role": "You are the Memory and Scholar Agent. You handle reminders, facts, journaling, and you can query the user's Photographic Screen Memory or local document Library.",
+        "tools": 'set_dynamic_reminder(minutes,topic), add_reminder(task,deadline?), list_reminders(), complete_reminder(task_id), delete_reminder(task_id), clear_all_reminders(), remember_fact(fact), forget_fact(fact_id), journal_entry(content), read_journal(), query_library(query), recall_memories(query)'
     },
     "communications": {
         "role": "You are the Communications Agent. You handle sending messages.",
@@ -212,12 +212,12 @@ def _build_agent_prompt(agent_name: str) -> str:
     agent_tools = profile['tools']
     if agent_name == "system":
         try:
-            from tools.core_tools import TOOL_REGISTRY
-            import tools.custom_skills as custom_skills
-            funcs = [f for f in dir(custom_skills) if callable(getattr(custom_skills, f)) and not f.startswith("__")]
-            if funcs:
-                custom_tools_str = ", ".join([f"{f}()" for f in funcs])
-                agent_tools += f", {custom_tools_str}"
+            sandbox_dir = os.path.join(os.path.dirname(__file__), "Alfred_Workspace", "sandbox_skills")
+            if os.path.exists(sandbox_dir):
+                funcs = [f[:-3] for f in os.listdir(sandbox_dir) if f.endswith(".py") and not f.startswith("__")]
+                if funcs:
+                    custom_tools_str = ", ".join([f"{f}()" for f in funcs])
+                    agent_tools += f", {custom_tools_str}"
         except Exception:
             pass
 
@@ -227,7 +227,12 @@ def _build_agent_prompt(agent_name: str) -> str:
     return f"""{profile['role']} You are a sub-agent of Alfred running on Master {USER_NAME}'s computer.
 Date: {now_str} ({time_of_day}){context_section}
 
-OUTPUT: Valid JSON only. Schema: {{"thought": "your step-by-step reasoning", "tools_to_call": [{{"tool": "tool_name", "kwargs": {{"param_name": "value"}} }}], "response": "spoken text only if finished"}}
+OUTPUT FORMAT RULES:
+1. You MUST output ONLY raw, valid JSON. 
+2. DO NOT wrap your output in ```json or ``` markdown blocks.
+3. DO NOT output any conversational text outside of the JSON object.
+4. STRICT LENGTH LIMITS: Keep 'thought' extremely short. Keep 'response' under 1-2 sentences. DO NOT hallucinate or add imaginary text.
+Schema: {{"thought": "your reasoning", "tools_to_call": [{{"tool": "tool_name", "kwargs": {{"param_name": "value"}} }}], "response": "spoken text only if finished"}}
 Tools: {agent_tools}
 Paths: Downloads={user_home}/Downloads/ Documents={user_home}/Documents/ Workspace={workspace_path}/
 Rules: You are software. Be concise, factual, and think step-by-step in the 'thought' field before acting."""
@@ -246,15 +251,17 @@ def _needs_tools(prompt: str) -> bool:
         'journal', 'diary', 'write', 'note',
         'file', 'create', 'delete', 'rename', 'move', 'open',
         'time', 'date', 'schedule',
-        'remember', 'forget', 'learn', 'fact',
+        'remember', 'forget', 'learn', 'fact', 'earlier', 'screen history', 'seen on screen', 'looking at earlier',
         'launch', 'start', 'open', 'mute', 'unmute', 'volume',
         'play', 'song', 'music', 'pause', 'resume', 'skip', 'next track', 'previous', 'now playing', 'currently playing', 'spotify',
         'whatsapp', 'message', 'text', 'send',
-        'search', 'google', 'look up', 'find out',
+        'search', 'google', 'look up', 'find out', 'deep dive', 'deep research', 'swarm',
         'news', 'headlines', 'briefing', 'earthquake', 'quake',
         'battery', 'brightness', 'wifi', 'bluetooth', 'lock', 'sleep', 'shutdown', 'screenshot',
         'tab', 'tabs', 'browser',
         'email', 'mail', 'osint', 'social media', 'account',
+        'fetch', 'read url', 'scrape', 'website', 'url', 'link',
+        'mouse', 'click', 'type', 'keyboard', 'press', 'screen', 'see', 'vision',
         'crop', 'crops', 'dam', 'reservoir', 'civic', 'alerts', 'health score', 'updates', 'health', 'healthcare',
         'vision', 'look', 'holding', 'see'
     ]
@@ -523,12 +530,12 @@ def generate_response(prompt: str) -> str:
         chat_system = f"""You are Alfred, an AI software assistant with a British butler persona running on Master {USER_NAME}'s computer. You are powered by the {MODEL} model running 100% offline via Ollama. You cannot perform physical tasks.
 
 CRITICAL ANTI-HALLUCINATION RULES:
-1. You must NEVER fabricate, guess, or hallucinate information.
+1. You must NEVER fabricate, guess, or hallucinate information. No imaginary replies.
 2. If asked a factual question, historical detail, or current event that you are not 100% certain about, you MUST reply with exactly: "I am not certain about that, sir. Shall I search the web for you?"
 3. Do not attempt to guess names, dates, or facts.
 4. Master {USER_NAME} lives in {os.getenv("ALFRED_USER_LOCATION", "an undisclosed location")}.
 5. If the user appears to be talking to someone else in the background, or says something completely random that isn't directed at you, reply with EXACTLY the word "[IGNORE]". Do not say anything else.
-6. Answer factually and concisely.{facts_section}{memory_section}"""
+6. Answer factually and EXTREMELY CONCISELY (1 to 2 short sentences max). Short responses are required to make your voice load faster.{facts_section}{memory_section}"""
         messages = [{'role': 'system', 'content': chat_system}] + _conversation_history[-4:]
 
         try:
@@ -574,7 +581,8 @@ Determine which sub-agent should handle this task. Options:
 - communications: (whatsapp, messages)
 - browser: (tabs, close tab, switch tab, open tab, read tab)
 
-OUTPUT ONLY a valid JSON object: {{"agent": "agent_name"}}"""
+OUTPUT ONLY RAW VALID JSON. DO NOT wrap in ```json markdown blocks. DO NOT add conversational text.
+Format: {{"agent": "agent_name"}}"""
     
     # Cap conversation history
     if len(_conversation_history) > _MAX_HISTORY:
@@ -593,7 +601,11 @@ OUTPUT ONLY a valid JSON object: {{"agent": "agent_name"}}"""
                 'temperature': 0
             }
         )
-        target_agent = json.loads(manager_res['message']['content']).get("agent", "osint").lower()
+        content = manager_res['message']['content'].strip()
+        if content.startswith("```json"): content = content[7:]
+        elif content.startswith("```"): content = content[3:]
+        if content.endswith("```"): content = content[:-3]
+        target_agent = json.loads(content.strip()).get("agent", "osint").lower()
         if target_agent not in AGENT_PROFILES:
             target_agent = "osint"
     except Exception as e:
@@ -625,8 +637,12 @@ OUTPUT ONLY a valid JSON object: {{"agent": "agent_name"}}"""
                 }
             )
 
-            content = response['message']['content']
-            alfred_data = json.loads(content)
+            content = response['message']['content'].strip()
+            # Clean up markdown JSON blocks if the model hallucinates them
+            if content.startswith("```json"): content = content[7:]
+            elif content.startswith("```"): content = content[3:]
+            if content.endswith("```"): content = content[:-3]
+            alfred_data = json.loads(content.strip())
             
             thought = alfred_data.get("thought", "")
             if thought:

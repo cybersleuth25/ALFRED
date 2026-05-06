@@ -2,6 +2,8 @@ import memory_engine
 from tools import system_tools
 from tools import osint_tools
 from tools import browser_tools
+from tools import desktop_tools
+from tools import swarm_engine
 import scholar_engine
 from datetime import datetime
 import requests
@@ -550,10 +552,10 @@ def analyze_webcam_local() -> str:
 def learn_new_skill(skill_description: str) -> str:
     """
     Uses Gemini to write a self-contained Python function for the requested skill,
-    saves it to custom_skills.py, and reloads the module to integrate it dynamically.
+    saves it to the Dockerized sandbox_skills directory, and integrates it.
     """
     import os
-    import importlib
+    import re
     
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -589,34 +591,57 @@ def learn_new_skill(skill_description: str) -> str:
             
         code = code.strip()
         
-        # Append to custom_skills.py
-        custom_skills_path = os.path.join(os.path.dirname(__file__), "custom_skills.py")
-        with open(custom_skills_path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n# Skill added by Alfred on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        # Parse the function name
+        match = re.search(r"def\s+([a-zA-Z_]\w*)\s*\(", code)
+        if not match:
+            return "Failed to identify function name in generated code."
+        func_name = match.group(1)
+        
+        sandbox_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "sandbox_skills")
+        os.makedirs(sandbox_dir, exist_ok=True)
+        script_path = os.path.join(sandbox_dir, f"{func_name}.py")
+        
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
+            f.write(f"\n\nif __name__ == '__main__':\n")
+            f.write(f"    import json, sys\n")
+            f.write(f"    kwargs = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {{}}\n")
+            f.write(f"    result = {func_name}(**kwargs)\n")
+            f.write(f"    print(result)\n")
             
-        print("[Skill Engine] Code written and saved to custom_skills.py.")
+        print("[Skill Engine] Code written and saved to sandbox_skills.")
         
-        # Reload the module and sync the registry
-        import tools.custom_skills as custom_skills
-        importlib.reload(custom_skills)
-        
-        # Find the newly added function and put it in TOOL_REGISTRY
-        added_funcs = [func for func in dir(custom_skills) if callable(getattr(custom_skills, func)) and not func.startswith("__")]
-        
-        new_tools = []
-        for func_name in added_funcs:
-            if func_name not in TOOL_REGISTRY:
-                TOOL_REGISTRY[func_name] = getattr(custom_skills, func_name)
-                new_tools.append(func_name)
-                
-        if new_tools:
-            return f"I have successfully learned a new skill: {new_tools[0]}. You may now ask me to perform it."
-        else:
-            return "I wrote the code, but failed to identify the function name to register it."
+        TOOL_REGISTRY[func_name] = make_docker_wrapper(func_name)
+        return f"I have successfully learned a new isolated skill: {func_name}. You may now ask me to perform it."
             
     except Exception as e:
         return f"I encountered an error while trying to write my new skill: {e}"
+
+def make_docker_wrapper(skill_name: str):
+    def wrapper(**kwargs):
+        import subprocess, json, os
+        sandbox_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "sandbox_skills")
+        cmd = [
+            "docker", "run", "--rm", 
+            "-v", f"{sandbox_dir}:/skills", 
+            "alfred-sandbox", 
+            "python", f"/skills/{skill_name}.py", json.dumps(kwargs)
+        ]
+        try:
+            # Check if docker is installed
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return res.stdout.strip()
+        except FileNotFoundError:
+            # Docker not installed, fallback to local isolated process
+            res = subprocess.run(["python", os.path.join(sandbox_dir, f"{skill_name}.py"), json.dumps(kwargs)], capture_output=True, text=True)
+            return res.stdout.strip() + "\n(Warning: Ran locally. Please install Docker and build 'alfred-sandbox' image.)"
+        except subprocess.CalledProcessError as e:
+            # Fallback if image doesn't exist
+            res = subprocess.run(["python", os.path.join(sandbox_dir, f"{skill_name}.py"), json.dumps(kwargs)], capture_output=True, text=True)
+            return res.stdout.strip() + "\n(Warning: Docker execution failed. Ran locally.)"
+        except Exception as e:
+            return f"Error executing docker skill: {e}"
+    return wrapper
 
 # A registry mapping tool names (as expected from LLM JSON) to their python functions
 TOOL_REGISTRY = {
@@ -662,6 +687,8 @@ TOOL_REGISTRY = {
     "daily_briefing": osint_tools.daily_briefing,
     "reverse_email_lookup": osint_tools.reverse_email_lookup,
     "generate_district_health_score": osint_tools.generate_district_health_score,
+    "stealth_fetch_url": osint_tools.stealth_fetch_url,
+    "deep_research_swarm": swarm_engine.deep_research_swarm,
     
     # Phase 9: Deep OS Control
     "get_battery_status": system_tools.get_battery_status,
@@ -698,16 +725,27 @@ TOOL_REGISTRY = {
     
     # Phase 14: Dynamic Skill Engine
     "learn_new_skill": learn_new_skill,
+    
+    # Phase 15: Autonomous Desktop Control & Vision
+    "get_screen_info": desktop_tools.get_screen_info,
+    "mouse_move_and_click": desktop_tools.mouse_move_and_click,
+    "keyboard_type": desktop_tools.keyboard_type,
+    "keyboard_press": desktop_tools.keyboard_press,
+    "keyboard_hotkey": desktop_tools.keyboard_hotkey,
+    "analyze_screen": desktop_tools.analyze_screen,
 }
 
 # --- Dynamic Import of Custom Skills on Startup ---
 try:
-    import tools.custom_skills as custom_skills
-    funcs = [func for func in dir(custom_skills) if callable(getattr(custom_skills, func)) and not func.startswith("__")]
-    for func_name in funcs:
-        TOOL_REGISTRY[func_name] = getattr(custom_skills, func_name)
+    import os
+    sandbox_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "sandbox_skills")
+    if os.path.exists(sandbox_dir):
+        for file in os.listdir(sandbox_dir):
+            if file.endswith(".py") and not file.startswith("__"):
+                func_name = file[:-3]
+                TOOL_REGISTRY[func_name] = make_docker_wrapper(func_name)
 except Exception as e:
-    print(f"[Warning] Failed to load custom skills on startup: {e}")
+    print(f"[Warning] Failed to load sandbox skills on startup: {e}")
 
 def execute_tool(tool_name: str, kwargs: dict) -> str:
     """

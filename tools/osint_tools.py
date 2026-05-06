@@ -268,3 +268,39 @@ def generate_district_health_score(district_slug: str = None) -> str:
         
     except Exception as e:
         return f"Failed to generate health score for {district_slug}: {e}"
+# ─────────────────────────────────────────────
+# TOOL 7: Stealth Web Fetch (TinyFish / Jina)
+# ─────────────────────────────────────────────
+def stealth_fetch_url(url: str) -> str:
+    """
+    Stealth scrapes a website bypassing Cloudflare/Bot-protection and returns clean Markdown.
+    Uses Jina Reader API (or TinyFish) to extract article content.
+    """
+    import os
+    import requests
+    
+    # We use Jina Reader as the reliable stealth endpoint which provides identical 
+    # stealth Chrome-to-Markdown functionality without needing complex MCP servers.
+    # If TinyFish REST endpoint becomes public, it can be swapped here using TINYFISH_API_KEY.
+    
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        headers = {
+            "Accept": "text/event-stream"
+        }
+        
+        # We increase timeout because stealth headless browsers take 2-4 seconds to bypass Cloudflare
+        resp = requests.get(jina_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        
+        content = resp.text
+        
+        # Truncate to first 4000 chars to avoid overflowing Phi-3's memory context
+        if len(content) > 4000:
+            content = content[:4000] + "\n\n...[Content Truncated due to length]..."
+            
+        return f"Clean Markdown Content from {url}:\n\n{content}"
+    except requests.Timeout:
+        return f"Timeout while trying to stealth-fetch {url}. The site may have extreme bot-protection or is offline."
+    except Exception as e:
+        return f"Failed to stealth-fetch {url}: {e}"

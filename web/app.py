@@ -403,6 +403,13 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"[System] Failed to start Telegram Bot: {e}")
     
+    # Start the Screen-Pipe Infinite Memory Daemon
+    try:
+        import screen_pipe
+        screen_pipe.start_daemon()
+    except Exception as e:
+        print(f"[System] Failed to start Screen Pipe Daemon: {e}")
+    
     # Launch Alfred as a standalone desktop app using Chrome/Edge --app mode
     # This creates a clean, frameless window (no tabs, no address bar) like Spotify
     import subprocess, shutil

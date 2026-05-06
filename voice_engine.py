@@ -7,15 +7,29 @@ import ctypes
 import time
 import threading
 
-print("[Loading Voice Engine (Edge TTS - British Butler Neural Voice)]")
+print("[Loading Voice Engine (Edge TTS / Kokoro Offline)]")
 
 # ── Voice Configuration ──
 # en-GB-RyanNeural: The most natural British male voice available
-# Calm, refined, steady — perfect for a distinguished butler persona
 VOICE = "en-GB-RyanNeural"
-# Slightly slower for warmth and gravitas, lowered pitch for authority
 RATE = "-8%"
 PITCH = "-5Hz"
+
+# ── Kokoro TTS Configuration ──
+KOKORO_AVAILABLE = False
+try:
+    from kokoro import KPipeline
+    import soundfile as sf
+    KOKORO_AVAILABLE = True
+    print("[Voice Engine] Kokoro Offline TTS detected. Initializing Pipeline...")
+    kokoro_pipeline = KPipeline(lang_code='b') # 'b' for British English
+    KOKORO_VOICE = 'bm_george' # British male voice
+except ImportError:
+    pass
+
+# ── Audio Cache System ──
+AUDIO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "Alfred_Workspace", "audio_cache")
+os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
 
 # ── Interrupt System ──
 _stop_flag = threading.Event()
@@ -44,9 +58,37 @@ async def _speak_async(text: str):
     queue = asyncio.Queue()
     
     async def producer():
+        import hashlib
+        text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+        cache_path = os.path.join(AUDIO_CACHE_DIR, text_hash)
+        os.makedirs(cache_path, exist_ok=True)
+        
+        cached_files = sorted([f for f in os.listdir(cache_path) if f.endswith('.wav') or f.endswith('.mp3')])
+        if len(cached_files) > 0:
+            for f in cached_files:
+                if _stop_flag.is_set(): break
+                await queue.put(os.path.join(cache_path, f))
+            await queue.put(None)
+            return
+
+        if KOKORO_AVAILABLE:
+            try:
+                generator = kokoro_pipeline(text, voice=KOKORO_VOICE, speed=0.9, split_pattern=r'\n+')
+                for i, (gs, ps, audio) in enumerate(generator):
+                    if _stop_flag.is_set(): break
+                    if audio is not None:
+                        tmp_path = os.path.join(cache_path, f"{i:03d}.wav")
+                        sf.write(tmp_path, audio, 24000)
+                        await queue.put(tmp_path)
+                await queue.put(None)
+                return
+            except Exception as e:
+                print(f"[Voice Error] Kokoro failed, falling back to Edge TTS: {e}")
+
+        # Fallback to Edge TTS
         for i, chunk in enumerate(chunks):
             if _stop_flag.is_set(): break
-            tmp_path = os.path.join(tempfile.gettempdir(), f"alfred_speech_{i}.mp3")
+            tmp_path = os.path.join(cache_path, f"{i:03d}.mp3")
             for attempt in range(3):
                 try:
                     await edge_tts.Communicate(chunk, VOICE, rate=RATE, pitch=PITCH).save(tmp_path)
@@ -59,13 +101,31 @@ async def _speak_async(text: str):
         await queue.put(None) # Signal EOF
 
     async def consumer():
+        import ctypes
+        from ctypes import wintypes
+        _GetShortPathNameW = ctypes.windll.kernel32.GetShortPathNameW
+        _GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        _GetShortPathNameW.restype = wintypes.DWORD
+
+        def get_short_path(long_name):
+            output_buf_size = 0
+            while True:
+                output_buf = ctypes.create_unicode_buffer(output_buf_size)
+                needed = _GetShortPathNameW(long_name, output_buf, output_buf_size)
+                if output_buf_size >= needed:
+                    return output_buf.value
+                else:
+                    output_buf_size = needed
+
         while True:
             if _stop_flag.is_set(): break
             tmp_path = await queue.get()
             if tmp_path is None: break
             
+            short_tmp_path = get_short_path(tmp_path)
+            
             mci('close alfred_audio', None, 0, 0)
-            if mci(f'open "{tmp_path}" type mpegvideo alias alfred_audio', None, 0, 0) != 0:
+            if mci(f'open "{short_tmp_path}" type mpegvideo alias alfred_audio', None, 0, 0) != 0:
                 continue
                 
             mci('play alfred_audio', None, 0, 0)

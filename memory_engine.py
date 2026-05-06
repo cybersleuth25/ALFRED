@@ -2,7 +2,14 @@ import sqlite3
 import os
 import json
 import math
+import numpy as np
 from datetime import datetime
+
+try:
+    import faiss
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "alfred_memory.db")
 
@@ -246,22 +253,61 @@ def _generate_embedding(text: str) -> list:
 
 
 def _cosine_similarity(vec_a: list, vec_b: list) -> float:
-    """
-    Pure-Python cosine similarity between two vectors.
-    Returns a value between -1 and 1 (1 = identical, 0 = orthogonal).
-    No numpy dependency needed.
-    """
+    """Fallback python cosine similarity"""
     if not vec_a or not vec_b or len(vec_a) != len(vec_b):
         return 0.0
-    
     dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
     magnitude_a = math.sqrt(sum(a * a for a in vec_a))
     magnitude_b = math.sqrt(sum(b * b for b in vec_b))
-    
     if magnitude_a == 0 or magnitude_b == 0:
         return 0.0
-    
     return dot_product / (magnitude_a * magnitude_b)
+
+# --- FAISS Index Management ---
+_faiss_index = None
+_faiss_id_map = {} # Maps FAISS index integer to SQLite row ID
+
+def _init_faiss():
+    global _faiss_index, _faiss_id_map
+    if not FAISS_AVAILABLE:
+        return
+    
+    # Nomic-embed-text uses 768 dimensions
+    d = 768
+    _faiss_index = faiss.IndexFlatIP(d) # Inner product (Cosine sim for normalized vectors)
+    
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, embedding FROM semantic_memories")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        return
+        
+    vectors = []
+    _faiss_id_map = {}
+    for i, row in enumerate(rows):
+        try:
+            emb = json.loads(row["embedding"])
+            # Normalize vector for Cosine Similarity in Inner Product index
+            emb = np.array(emb, dtype=np.float32)
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+            vectors.append(emb)
+            _faiss_id_map[i] = row["id"]
+        except Exception:
+            pass
+            
+    if vectors:
+        vecs_np = np.array(vectors, dtype=np.float32)
+        _faiss_index.add(vecs_np)
+        print(f"[Memory] Initialized FAISS index with {len(vectors)} memories.")
+
+# Initialize FAISS on load
+_init_faiss()
 
 
 def store_memory(content: str, category: str = "general") -> bool:
@@ -291,8 +337,20 @@ def store_memory(content: str, category: str = "general") -> bool:
             "INSERT INTO semantic_memories (content, embedding, category, created_at) VALUES (?, ?, ?, ?)",
             (content.strip(), json.dumps(embedding), category, datetime.now().isoformat())
         )
+        new_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        
+        # Update FAISS index
+        global _faiss_index, _faiss_id_map
+        if FAISS_AVAILABLE and _faiss_index is not None:
+            emb = np.array(embedding, dtype=np.float32)
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+            _faiss_index.add(np.array([emb]))
+            _faiss_id_map[_faiss_index.ntotal - 1] = new_id
+            
         print(f"[Memory] Stored: '{content[:60]}...' ({category})")
         return True
     except Exception as e:
@@ -311,6 +369,51 @@ def search_memories(query: str, top_k: int = 3) -> list:
     if not query_embedding:
         return []
     
+    global _faiss_index, _faiss_id_map
+    if FAISS_AVAILABLE and _faiss_index is not None and _faiss_index.ntotal > 0:
+        # FAISS Accelerated Search
+        emb = np.array(query_embedding, dtype=np.float32)
+        norm = np.linalg.norm(emb)
+        if norm > 0:
+            emb = emb / norm
+            
+        # Search index
+        k_search = min(top_k * 2, _faiss_index.ntotal)
+        D, I = _faiss_index.search(np.array([emb]), k_search)
+        
+        # Fetch actual DB rows for the matching IDs
+        match_ids = []
+        sim_map = {}
+        for i, (score, idx) in enumerate(zip(D[0], I[0])):
+            if score > 0.5 and idx != -1 and idx in _faiss_id_map:
+                db_id = _faiss_id_map[idx]
+                match_ids.append(str(db_id))
+                sim_map[db_id] = float(score)
+                
+        if not match_ids:
+            return []
+            
+        id_list = ",".join(match_ids)
+        conn = _get_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id, content, category, created_at FROM semantic_memories WHERE id IN ({id_list})")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        results = []
+        for row in rows:
+            results.append({
+                "id": row["id"],
+                "content": row["content"],
+                "category": row["category"],
+                "created_at": row["created_at"],
+                "similarity": round(sim_map.get(row["id"], 0), 4)
+            })
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_k]
+
+    # --- Fallback Pure-Python Search ---
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -321,7 +424,6 @@ def search_memories(query: str, top_k: int = 3) -> list:
     if not rows:
         return []
     
-    # Score every memory against the query
     scored = []
     for row in rows:
         try:
@@ -338,7 +440,6 @@ def search_memories(query: str, top_k: int = 3) -> list:
         except (json.JSONDecodeError, TypeError):
             continue
     
-    # Sort by similarity descending and return top_k
     scored.sort(key=lambda x: x["similarity"], reverse=True)
     return scored[:top_k]
 

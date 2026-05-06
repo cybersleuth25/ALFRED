@@ -1,46 +1,17 @@
 # ALFRED PROTOCOL
 ### FUTURE UPGRADE ROADMAP 
 
-✅ **REACHED MILESTONES:**
-- Multi-modal Vision (Webcam & Screen content analysis via Protocol Omega)
-- External Web Searching (Google/Wikipedia scraping)
-- App Launching (Spotify, VS Code, Browser via tool commands)
-- Proactive Autonomy (Protocol Omega daemon runs in background without prompting)
-- Particle & Hologram UI (React-Three-Fiber visualizer)
-- Auto-boot integration (Starts silently on Windows launch)
-- Deep OS Control (Brightness, WiFi, Bluetooth, Battery, Lock, Sleep, Shutdown, Volume, Screenshot)
-- Web Browser Tab Control (CDP-based: list, switch, close, open, read tabs in Chrome/Edge/Brave)
-- Mobile Integration (Telegram Bot: remote commands, /status, /screenshot, photo analysis via Gemini)
-- Semantic Memory Engine (Vector embeddings via nomic-embed-text — Alfred remembers conversations organically)
-- Multi-Agent Orchestration (Manager → OSINT/System/Memory/Communications/Browser sub-agents)
-- Proactive Mobile Alerts (Battery warnings, reminders, and Protocol Omega scolds pushed to phone)
-- British Butler Voice (en-GB-RyanNeural — refined, natural, human-like neural voice)
-- Hardened System Tools (pycaw volume, WiFi retry, brightness verification, screenshot fallbacks)
-- Fuzzy Browser Tab Matching (smart scoring instead of first-match)
-- Persistent Conversation Memory (SQLite-backed — Alfred remembers across terminal restarts)
-- Location-Aware Weather (Chikkamagaluru hardcoded in .env, no IP guessing)
-- Real Startup Briefing (Live weather, rain advisory, pending tasks, top headline on first wake)
-- Anti-Hallucination System Prompt (Never fabricate info, admit uncertainty honestly)
-- UI/UX Overhaul (Weather panel, live transcript, clock, ambient state glow, no fake data)
-- Multi-User Profiles (User identification by Telegram ID with isolated memories)
-- Local Computer Vision Engine (Offline YOLOv8 object detection via webcam)
-- Dynamic Skill Engine (Alfred writes and injects custom Python code on the fly to learn new skills)
-- Self-Correcting ReAct Loop (Catches tool errors and self-corrects reasoning autonomously)
-- Advanced Conversational Memory (RAG Vector Database for semantic facts and context)
----
 
 ### PENDING UPGRADES
 
 1. **SMART HOME HUB (IoT Integration)**
    - *Upgrade needed:* Connect Alfred to local Wi-Fi smart plugs/lights (like Philips Hue or Tuya). Allow voice commands to dim physical room lights before "Sleep Mode" or "Protocol Omega".
 
-2. **BRAIN UPGRADE (When purchasing new hardware)**
-   - Swap the current model for a highly-advanced offline 14B or 30B reasoning model (like Qwen 2.5 or Llama-3) by simply altering the `ollama.chat` parameter in `llm_engine.py`. This will massively boost his coding and logic comprehension.
+2. **ROBOFLOW TRACKERS**
+   - *Upgrade needed:* Add Object Persistence to YOLOv8 using `roboflow/trackers` (ByteTrack or BoT-SORT) to track subjects across frames for robotics, drones, and Smart Mirror facial tracking.
 
-3. **THE MIXTRAL JUMP (Hardware Permitting)**
-   - Upgrade the core engine to **Mixtral 8x7B** (an advanced Mixture of Experts model).
-   - *Why:* The MoE architecture is perfect for Alfred's `ReAct` Loop logic schema. It runs exceptionally fast because it only activates subset neural experts at a time, but provides 47-Billion parameter reasoning levels.
-   - *Requirement:* A new laptop with 24GB to 32GB+ of Unified RAM/VRAM to confidently fit the model weights.
+3. **PLAYCANVAS SUPERSPLAT (3D Gaussian Splatting)**
+   - *Upgrade needed:* Use SuperSplat to edit and compress photorealistic 3D scans, allowing hyper-realistic 3D holograms in the React-Three-Fiber UI instead of basic particles.
 
 4. **VOICE CLONING (Custom Butler Voice)**
    - *Upgrade needed:* Train a custom voice model using Coqui XTTS v2 with a public domain butler voice reference clip. Currently deferred due to VRAM constraints (RTX 3050 4GB). When hardware permits, swap XTTS as the TTS backend for a perfectly personalized voice.
@@ -48,20 +19,15 @@
 5. **MULTI-AGENT RAG SWARM**
    - *Upgrade needed:* Introduce specialized "researcher" agents that can concurrently scrape multiple deep-web and surface-web sources, compile the data, and summarize it into a singular brief. Currently, Alfred relies on linear OSINT scraping.
 
-6. **DOCKERIZED SKILL SANDBOX**
+
+7. **DOCKERIZED SKILL SANDBOX**
    - *Upgrade needed:* Move the new Dynamic Skill Engine into an isolated Docker container. This will allow Alfred to safely write, compile, and test highly complex (and potentially dangerous) Python scripts without risking the host machine's integrity.
 
-7. **PHYSICAL HARDWARE INTEGRATION (Robotics/Drones)**
+8. **PHYSICAL HARDWARE INTEGRATION (Robotics/Drones)**
    - *Upgrade needed:* Connect Alfred to local hardware APIs (e.g., DJI SDK or Arduino serial ports). Use the Dynamic Skill Engine to allow Alfred to teach himself how to fly a drone or control robotic arms purely via natural language commands.
 
-8. **INFINITE DESKTOP MEMORY (Screen-Pipe OCR)**
+9. **INFINITE DESKTOP MEMORY (Screen-Pipe OCR)**
    - *Upgrade needed:* A background daemon that takes a low-res screenshot of the computer every 5 seconds, extracts the text using OCR, and saves it to a Vector Database. Allows the user to ask questions like "What was that jacket I looked at on Amazon last Tuesday?" and have Alfred instantly recall the screen context.
 
-9. **AUTONOMOUS DESKTOP CONTROL (PyAutoGUI + Vision)**
-   - *Upgrade needed:* Give Alfred a "Keyboard & Mouse Agent." By combining the Local Vision engine with screen coordinates and PyAutoGUI, Alfred can literally take over the mouse to navigate UI menus, delete spam emails, or even play games alongside the user.
-
-10. **EMOTIONAL & RESPONSIVE VOICE (Kokoro TTS)**
-    - *Upgrade needed:* Replace the static Windows Edge TTS with an emotional TTS engine (like Kokoro). Alfred's voice tone will dynamically change based on context—sounding urgent during security alerts, relaxed during casual chats, or disappointed if the user breaks Protocol Omega.
-
-11. **SMART MIRROR UI MODE**
+12. **SMART MIRROR UI MODE**
     - *Upgrade needed:* Create a secondary, high-contrast, minimalist black-and-white theme for the React Dashboard. This allows the dashboard to be deployed on a Raspberry Pi behind a two-way mirror, creating a physical "Smart Mirror" that wakes up via facial recognition when the user looks at it.
