@@ -105,6 +105,32 @@ def init_db():
     except Exception:
         pass  # Column already exists
     
+    # --- Protocol Omega: Study Sessions ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS study_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_minutes INTEGER DEFAULT 0,
+            distractions INTEGER DEFAULT 0,
+            focus_score INTEGER DEFAULT 100,
+            pomodoro_cycles INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
+            briefing TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS study_distractions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            distraction_type TEXT NOT NULL,
+            detail TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES study_sessions(id)
+        )
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -240,9 +266,9 @@ def _generate_embedding(text: str) -> list:
     Returns a list of floats (the embedding vector).
     """
     try:
-        import ollama
-        result = ollama.embed(model=EMBED_MODEL, input=text)
-        # ollama.embed returns {"embeddings": [[...floats...]]}
+        import shared
+        # Keeping embeddings local (on RTX 3050) because they are tiny and fast
+        result = shared.local_client.embed(model=EMBED_MODEL, input=text)
         embeddings = result.get("embeddings", [])
         if embeddings and len(embeddings) > 0:
             return embeddings[0]
@@ -516,6 +542,243 @@ def clear_old_history(keep_last: int = 200):
     )
     conn.commit()
     conn.close()
+
+
+# =============================================
+# PROTOCOL OMEGA: STUDY SESSION TRACKING
+# =============================================
+
+def create_study_session() -> int:
+    """Creates a new study session and returns its ID."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO study_sessions (started_at, status) VALUES (?, 'active')",
+        (datetime.now().isoformat(),)
+    )
+    session_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    print(f"[Memory] Created study session #{session_id}")
+    return session_id
+
+
+def end_study_session(session_id: int, briefing: str = "", pomodoro_cycles: int = 0):
+    """Marks a study session as completed and calculates the focus score."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    
+    # Get session start time and distraction count
+    cursor.execute("SELECT started_at, distractions FROM study_sessions WHERE id = ?", (session_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return
+    
+    started_at = row[0]
+    distractions = row[1] or 0
+    
+    # Calculate duration
+    try:
+        start_dt = datetime.fromisoformat(started_at)
+        duration_minutes = max(1, int((datetime.now() - start_dt).total_seconds() / 60))
+    except Exception:
+        duration_minutes = 0
+    
+    # Focus score: starts at 100, loses points per distraction relative to session length
+    # Short sessions are penalized more per distraction
+    penalty_per_distraction = max(5, 30 - duration_minutes)  # Longer sessions = smaller penalty
+    focus_score = max(0, 100 - (distractions * penalty_per_distraction))
+    
+    cursor.execute("""
+        UPDATE study_sessions 
+        SET ended_at = ?, duration_minutes = ?, focus_score = ?, 
+            pomodoro_cycles = ?, status = 'completed', briefing = ?
+        WHERE id = ?
+    """, (datetime.now().isoformat(), duration_minutes, focus_score, 
+          pomodoro_cycles, briefing, session_id))
+    conn.commit()
+    conn.close()
+    print(f"[Memory] Ended study session #{session_id}: {duration_minutes}min, score={focus_score}, distractions={distractions}")
+
+
+def log_study_distraction(session_id: int, distraction_type: str, detail: str = ""):
+    """Logs a distraction event and increments the session counter."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO study_distractions (session_id, distraction_type, detail, timestamp) VALUES (?, ?, ?, ?)",
+        (session_id, distraction_type, detail, datetime.now().isoformat())
+    )
+    cursor.execute(
+        "UPDATE study_sessions SET distractions = distractions + 1 WHERE id = ?",
+        (session_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_active_study_session():
+    """Returns the currently active study session, or None. Used for crash recovery."""
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM study_sessions WHERE status = 'active' ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return None
+
+
+def close_orphaned_sessions():
+    """Marks any lingering 'active' sessions as 'crashed'. Called on startup."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE study_sessions 
+        SET status = 'crashed', ended_at = ?, focus_score = 0
+        WHERE status = 'active'
+    """, (datetime.now().isoformat(),))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected > 0:
+        print(f"[Memory] Closed {affected} orphaned study session(s) from a previous crash.")
+
+
+def get_study_history(last_n: int = 10) -> list:
+    """Returns the last N completed study sessions."""
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, started_at, ended_at, duration_minutes, distractions, 
+               focus_score, pomodoro_cycles, status, briefing
+        FROM study_sessions 
+        WHERE status IN ('completed', 'crashed')
+        ORDER BY id DESC LIMIT ?
+    """, (last_n,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_study_stats() -> dict:
+    """Returns aggregate study statistics."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_sessions,
+            COALESCE(SUM(duration_minutes), 0) as total_minutes,
+            COALESCE(AVG(focus_score), 0) as avg_focus_score,
+            COALESCE(SUM(distractions), 0) as total_distractions,
+            COALESCE(SUM(pomodoro_cycles), 0) as total_pomodoros,
+            COALESCE(MAX(duration_minutes), 0) as longest_session
+        FROM study_sessions WHERE status = 'completed'
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        total_hours = round(row[1] / 60, 1)
+        return {
+            "total_sessions": row[0],
+            "total_hours": total_hours,
+            "avg_focus_score": round(row[2]),
+            "total_distractions": row[3],
+            "total_pomodoros": row[4],
+            "longest_session_min": row[5]
+        }
+    return {
+        "total_sessions": 0, "total_hours": 0, "avg_focus_score": 0,
+        "total_distractions": 0, "total_pomodoros": 0, "longest_session_min": 0
+    }
+
+
+def get_session_distractions(session_id: int) -> list:
+    """Returns all distraction events for a given session."""
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, distraction_type, detail, timestamp FROM study_distractions WHERE session_id = ? ORDER BY id",
+        (session_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_daily_study_minutes() -> int:
+    """Returns total minutes studied today (completed sessions only)."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    today = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("""
+        SELECT COALESCE(SUM(duration_minutes), 0)
+        FROM study_sessions 
+        WHERE status = 'completed' AND started_at LIKE ?
+    """, (f"{today}%",))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def get_study_streak() -> int:
+    """Returns the number of consecutive days with at least one completed session."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT DATE(started_at) as study_date
+        FROM study_sessions 
+        WHERE status = 'completed'
+        ORDER BY study_date DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        return 0
+    
+    from datetime import timedelta
+    streak = 0
+    expected_date = datetime.now().date()
+    
+    for row in rows:
+        try:
+            study_date = datetime.strptime(row[0], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        
+        if study_date == expected_date:
+            streak += 1
+            expected_date -= timedelta(days=1)
+        elif study_date == expected_date - timedelta(days=1):
+            # Allow for "today hasn't been studied yet but yesterday was"
+            streak += 1
+            expected_date = study_date - timedelta(days=1)
+        else:
+            break
+    
+    return streak
+
+
+def get_distraction_breakdown(session_id: int) -> dict:
+    """Returns a categorized distraction breakdown for focus score explanation."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT distraction_type, COUNT(*) as count
+        FROM study_distractions 
+        WHERE session_id = ?
+        GROUP BY distraction_type
+    """, (session_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
 
 
 # Initialize tables when the module is imported

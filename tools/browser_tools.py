@@ -150,22 +150,31 @@ def switch_browser_tab(title: str) -> str:
 
 def open_browser_tab(url: str) -> str:
     """Opens a new tab in the first available browser with debugging enabled."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
     # Auto-prepend https if no protocol specified
     if not url.startswith("http"):
         url = f"https://{url}"
 
-    # Try to open in the first available browser via CDP
-    for browser_name, port in BROWSER_PORTS.items():
+    # Probe all browser ports concurrently to find the first available one
+    def _try_open(browser_name, port):
         try:
             resp = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=2)
             if resp.status_code == 200:
-                # CDP uses GET for /json/new with the URL as query parameter
                 new_resp = requests.get(f"http://127.0.0.1:{port}/json/new?{url}", timeout=3)
                 if new_resp.status_code == 200:
                     return f"Opened {url} in {browser_name}."
                 return f"Sent open command to {browser_name} (status: {new_resp.status_code})."
         except Exception:
-            continue
+            pass
+        return None
+
+    with ThreadPoolExecutor(max_workers=len(BROWSER_PORTS)) as pool:
+        futures = {pool.submit(_try_open, name, port): name for name, port in BROWSER_PORTS.items()}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                return result
 
     # Fallback: open in default browser via webbrowser module
     import webbrowser

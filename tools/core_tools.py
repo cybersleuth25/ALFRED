@@ -92,7 +92,7 @@ def journal_entry(content: str) -> str:
     """
     Appends a new entry to the user's journal file with a timestamp.
     """
-    journal_path = "C:/VS code/JARVIS/Alfred_Workspace/journal.txt"
+    journal_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "journal.txt")
     try:
         with open(journal_path, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {content}\n")
@@ -104,7 +104,7 @@ def read_journal() -> str:
     """
     Reads the user's journal file. Returns the last 10 entries if it exists.
     """
-    journal_path = "C:/VS code/JARVIS/Alfred_Workspace/journal.txt"
+    journal_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "journal.txt")
     try:
         with open(journal_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -228,8 +228,10 @@ def play_music(song_query: str) -> str:
         return _play_on_youtube(song_query)
     
     # User's Spotify Developer Credentials
-    CLIENT_ID = "20caa4dbf24e4c288bbaad1e2c0d576d"
-    CLIENT_SECRET = "6bf42c1ee9c647d3be1978467910576c"
+    from dotenv import load_dotenv
+    load_dotenv()
+    CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
+    CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
     
     try:
         # Step 1: Get an Access Token using Client Credentials Flow
@@ -298,8 +300,8 @@ def _get_spotify_user_token() -> str:
     if not refresh_token:
         return ""
     
-    CLIENT_ID = "20caa4dbf24e4c288bbaad1e2c0d576d"
-    CLIENT_SECRET = "6bf42c1ee9c647d3be1978467910576c"
+    CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
+    CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
     
     try:
         auth_b64 = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
@@ -632,13 +634,11 @@ def make_docker_wrapper(skill_name: str):
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return res.stdout.strip()
         except FileNotFoundError:
-            # Docker not installed, fallback to local isolated process
-            res = subprocess.run(["python", os.path.join(sandbox_dir, f"{skill_name}.py"), json.dumps(kwargs)], capture_output=True, text=True)
-            return res.stdout.strip() + "\n(Warning: Ran locally. Please install Docker and build 'alfred-sandbox' image.)"
+            # Docker not installed
+            return "Error: Docker is not installed or not running. I cannot safely execute this skill without my sandbox."
         except subprocess.CalledProcessError as e:
-            # Fallback if image doesn't exist
-            res = subprocess.run(["python", os.path.join(sandbox_dir, f"{skill_name}.py"), json.dumps(kwargs)], capture_output=True, text=True)
-            return res.stdout.strip() + "\n(Warning: Docker execution failed. Ran locally.)"
+            # Execution failed inside Docker
+            return f"Error executing skill inside sandbox: {e.stderr if e.stderr else e.stdout}"
         except Exception as e:
             return f"Error executing docker skill: {e}"
     return wrapper

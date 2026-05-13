@@ -6,10 +6,10 @@ _app_classification_cache = {}
 def generate_dynamic_scold(context_str):
     """Generates a dynamic, contextual scolding using the local Llama model."""
     try:
-        from llm_engine import MODEL, USER_NAME
-        import ollama
+        from llm_engine import USER_NAME
+        import llm_engine
         prompt = f"You are Alfred, a strict AI butler. Master {USER_NAME} is in a focused study session (Protocol Omega). I just detected: {context_str}. Scold them strictly but professionally in 1 or 2 short sentences. Spoken format."
-        res = ollama.chat(model=MODEL, messages=[{'role': 'user', 'content': prompt}], options={'temperature': 0.7, 'num_predict': 50})
+        res = llm_engine.chat(messages=[{'role': 'user', 'content': prompt}], options={'temperature': 0.7, 'num_predict': 50})
         return res['message']['content'].strip()
     except Exception as e:
         print(f"[Protocol Omega] Dynamic scold failed: {e}")
@@ -20,10 +20,9 @@ def classify_app_title(title):
     if title in _app_classification_cache:
         return _app_classification_cache[title]
     try:
-        from llm_engine import MODEL
-        import ollama
+        import llm_engine
         prompt = f"Classify this application window title as PRODUCTIVE or DISTRACTING for a student studying. Title: '{title}'. Answer with EXACTLY ONE WORD: either PRODUCTIVE or DISTRACTING."
-        res = ollama.chat(model=MODEL, messages=[{'role': 'user', 'content': prompt}], options={'temperature': 0.1, 'num_predict': 10})
+        res = llm_engine.chat(messages=[{'role': 'user', 'content': prompt}], options={'temperature': 0.1, 'num_predict': 10})
         ans = res['message']['content'].strip().upper()
         if "DISTRACTING" in ans:
             _app_classification_cache[title] = "DISTRACTING"

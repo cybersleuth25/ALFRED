@@ -20,14 +20,15 @@
    - *Upgrade needed:* Introduce specialized "researcher" agents that can concurrently scrape multiple deep-web and surface-web sources, compile the data, and summarize it into a singular brief. Currently, Alfred relies on linear OSINT scraping.
 
 
-7. **DOCKERIZED SKILL SANDBOX**
-   - *Upgrade needed:* Move the new Dynamic Skill Engine into an isolated Docker container. This will allow Alfred to safely write, compile, and test highly complex (and potentially dangerous) Python scripts without risking the host machine's integrity.
+7. **[COMPLETED] DOCKERIZED SKILL SANDBOX**
+   - *Upgrade completed:* Moved the Dynamic Skill Engine into an isolated Docker container, preventing LLM-generated code from accessing host files.
 
 8. **PHYSICAL HARDWARE INTEGRATION (Robotics/Drones)**
    - *Upgrade needed:* Connect Alfred to local hardware APIs (e.g., DJI SDK or Arduino serial ports). Use the Dynamic Skill Engine to allow Alfred to teach himself how to fly a drone or control robotic arms purely via natural language commands.
 
-9. **INFINITE DESKTOP MEMORY (Screen-Pipe OCR)**
-   - *Upgrade needed:* A background daemon that takes a low-res screenshot of the computer every 5 seconds, extracts the text using OCR, and saves it to a Vector Database. Allows the user to ask questions like "What was that jacket I looked at on Amazon last Tuesday?" and have Alfred instantly recall the screen context.
+9. **[COMPLETED] INFINITE DESKTOP MEMORY (Screen-Pipe OCR)**
+   - *Upgrade completed:* Tesseract OCR daemon installed and active. Screen snapshots are parsed and saved to the FAISS vector database.
 
-12. **SMART MIRROR UI MODE**
+12. **[COMPLETED] SMART MIRROR UI MODE**
+    - *Upgrade completed:* Added voice-activated pure black-and-white minimalist theme for hardware mirror deployments.
     - *Upgrade needed:* Create a secondary, high-contrast, minimalist black-and-white theme for the React Dashboard. This allows the dashboard to be deployed on a Raspberry Pi behind a two-way mirror, creating a physical "Smart Mirror" that wakes up via facial recognition when the user looks at it.

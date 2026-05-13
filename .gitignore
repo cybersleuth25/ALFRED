@@ -41,3 +41,12 @@ test_tracker2.py
 test_yolo.py
 list_models.py
 download_vosk.py
+
+# Audio cache (generated TTS files)
+Alfred_Workspace/audio_cache/
+
+# Dynamic Skill Sandbox (LLM-generated code — untrusted)
+Alfred_Workspace/sandbox_skills/
+
+# Journal and personal data
+Alfred_Workspace/journal.txt

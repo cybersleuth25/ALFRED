@@ -18,6 +18,7 @@ If an API fails, that section is gracefully skipped.
 import os
 import requests
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -126,8 +127,31 @@ def generate_startup_briefing(user_name: str) -> str:
     else:
         time_context = "late night"
 
-    # Gather Data
-    weather = _get_weather_data()
+    # Gather Data in parallel (cuts ~15s sequential → ~5s parallel)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        weather_future = pool.submit(_get_weather_data)
+        task_future = pool.submit(_get_pending_task_count)
+        batt_future = pool.submit(_get_battery_warning)
+        news_future = pool.submit(_get_top_headline)
+        
+        try:
+            weather = weather_future.result(timeout=10)
+        except Exception:
+            weather = {}
+        try:
+            task_count = task_future.result(timeout=5)
+        except Exception:
+            task_count = 0
+        try:
+            batt_warning = batt_future.result(timeout=3)
+        except Exception:
+            batt_warning = ""
+        try:
+            headline = news_future.result(timeout=8)
+        except Exception:
+            headline = ""
+
+    # Parse the gathered data
     temp = weather.get("temp_c", "?") if weather else "?"
     desc = weather.get("description", "unknown weather").lower() if weather else "unknown weather"
     rain = weather.get("rain_chance", 0) if weather else 0
@@ -138,11 +162,7 @@ def generate_startup_briefing(user_name: str) -> str:
     elif rain >= 30:
         rain_text = "Moderate chance of rain."
 
-    task_count = _get_pending_task_count()
     task_text = f"{task_count} pending tasks." if task_count > 0 else "No pending tasks."
-    
-    batt_warning = _get_battery_warning()
-    headline = _get_top_headline()
 
     # Construct strict prompt for the LLM
     data_points = f"- Current Time: {time_context}\n- Weather in {USER_CITY}: {temp}°C, {desc}. {rain_text}\n- Tasks: {task_text}\n"
@@ -161,15 +181,8 @@ Rules:
 4. End by asking how you can assist."""
 
     try:
-        import ollama
-        # Try to import MODEL from llm_engine, fallback to qwen2.5-coder:3b
-        try:
-            from llm_engine import MODEL
-        except ImportError:
-            MODEL = "qwen2.5-coder:3b"
-
-        res = ollama.chat(
-            model=MODEL,
+        import llm_engine
+        res = llm_engine.chat(
             messages=[{'role': 'user', 'content': prompt}],
             options={'temperature': 0.7, 'num_predict': 150}
         )

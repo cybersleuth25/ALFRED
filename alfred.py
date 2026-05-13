@@ -82,6 +82,13 @@ def main_loop():
     cron_engine.start_cron_daemon()
     security_engine.start_security_daemon()
 
+    # Initial Startup Greeting
+    shared.push_state("speaking")
+    startup_msg = _get_dynamic_greeting(USER_NAME) + " All systems are online."
+    shared.push_caption(startup_msg)
+    voice_engine.speak(startup_msg)
+    shared.push_caption("")
+
     is_active_mode = False
     _has_given_briefing = False  # Only deliver full briefing on first wake
 
@@ -210,27 +217,54 @@ def main_loop():
 
             # 3. Get the response from Llama (The Brain)
             shared.push_state("processing")
-            alfred_text = llm_engine.generate_response(user_input)
+            import queue
+            sentence_queue = queue.Queue()
             
-            if alfred_text == "[IGNORE]":
+            def _tts_callback(sentence):
+                sentence_queue.put(sentence)
+                
+            alfred_text_container = [""]
+            def _run_llm():
+                try:
+                    alfred_text_container[0] = llm_engine.generate_response(user_input, tts_callback=_tts_callback)
+                except Exception as e:
+                    print(e)
+                sentence_queue.put(None) # EOF marker
+                
+            llm_thread = threading.Thread(target=_run_llm, daemon=True)
+            llm_thread.start()
+            
+            # Wait for first chunk
+            first_chunk = sentence_queue.get()
+            
+            if first_chunk is None:
+                # LLM errored out without producing any output
                 shared.push_state("listening")
+                llm_thread.join()
+                continue
+            
+            if first_chunk == "[IGNORE]":
+                shared.push_state("listening")
+                llm_thread.join()
                 continue
 
-            # 4. Generate the audio and speak it (The Voice)
-            shared.push_log(alfred_text, "Alfred")
-            shared.push_caption(alfred_text)
+            # 4. Generate the audio and speak it (The Voice) — STREAMING PIPELINE
+            shared.push_caption(first_chunk)
             shared.push_state("speaking")
             
-            # Interrupt system: monitor raw mic volume while speaking
+            # Wake-word interrupt system: uses Vosk to detect "Alfred"/"Buddy" mid-speech
             _was_interrupted = [False]
+            _is_done_speaking = [False]
             
-            def _speak_and_wait():
-                voice_engine.speak(alfred_text)
-            
-            def _monitor_mic_for_interrupt():
-                """Monitor raw mic audio levels — if user speaks, stop Alfred."""
+            def _speak_streamed():
+                """Use the streaming TTS pipeline for true overlap between generation and playback."""
+                voice_engine.speak_streamed(sentence_queue, first_chunk)
+                _is_done_speaking[0] = True
+                
+            def _monitor_wake_word_for_interrupt():
+                """Monitor mic using Vosk for wake-word detection — if user says 'Alfred' or 'Buddy', stop."""
                 import pyaudio
-                import struct
+                import json as _json
                 import time
                 
                 # Wait for playback to actually begin
@@ -242,64 +276,114 @@ def main_loop():
                 if not voice_engine.is_speaking():
                     return
                 
-                try:
-                    pa = pyaudio.PyAudio()
-                    
-                    # Get the default input device's actual settings
-                    dev_info = pa.get_default_input_device_info()
-                    channels = min(int(dev_info['maxInputChannels']), 2)
-                    rate = int(dev_info['defaultSampleRate'])
-                    chunk = 2048
-                    
-                    stream = pa.open(
-                        format=pyaudio.paInt16,
-                        channels=channels,
-                        rate=rate,
-                        input=True,
-                        frames_per_buffer=chunk
-                    )
-                    
-                    print(f"[Interrupt monitor] Mic: {dev_info['name']}, {channels}ch, {rate}Hz")
-                    
-                    # First, measure Alfred's own speaker bleed for 0.5s to set baseline
-                    baseline_samples = []
-                    for _ in range(8):
-                        if not voice_engine.is_speaking():
-                            break
-                        data = stream.read(chunk, exception_on_overflow=False)
-                        samples = struct.unpack(f'<{len(data)//2}h', data)
-                        rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
-                        baseline_samples.append(rms)
-                    
-                    # Interrupt threshold = 4x the speaker bleed baseline, with a high minimum
-                    baseline = max(baseline_samples) if baseline_samples else 200
-                    threshold = max(baseline * 4.0, 16000)
-                    print(f"[Interrupt monitor] Baseline: {baseline:.0f}, Threshold: {threshold:.0f}")
-                    
-                    # Now monitor continuously
-                    while voice_engine.is_speaking():
-                        data = stream.read(chunk, exception_on_overflow=False)
-                        samples = struct.unpack(f'<{len(data)//2}h', data)
-                        rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
+                # Try Vosk-based interrupt (accurate, wake-word based)
+                if stt_engine._vosk_available and stt_engine._vosk_model:
+                    try:
+                        from vosk import KaldiRecognizer
+                        pa = pyaudio.PyAudio()
                         
-                        if rms > threshold:
-                            print(f"\n[Interrupt!] Voice spike detected (level: {rms:.0f}, threshold: {threshold:.0f})")
-                            voice_engine.stop_speaking()
-                            _was_interrupted[0] = True
-                            break
-                    
-                    stream.stop_stream()
-                    stream.close()
-                    pa.terminate()
-                except Exception as e:
-                    print(f"[Interrupt monitor error]: {e}")
+                        stream = pa.open(
+                            format=pyaudio.paInt16,
+                            channels=1,
+                            rate=stt_engine.VOSK_RATE,
+                            input=True,
+                            frames_per_buffer=stt_engine.VOSK_CHUNK,
+                        )
+                        
+                        rec = KaldiRecognizer(stt_engine._vosk_model, stt_engine.VOSK_RATE)
+                        rec.SetWords(False)
+                        
+                        print("[Interrupt monitor] Vosk wake-word detection active during speech")
+                        
+                        while not _is_done_speaking[0]:
+                            if not voice_engine.is_speaking():
+                                time.sleep(0.05)
+                                continue
+                            
+                            data = stream.read(stt_engine.VOSK_CHUNK, exception_on_overflow=False)
+                            
+                            if rec.AcceptWaveform(data):
+                                result = _json.loads(rec.Result())
+                                text = result.get("text", "").lower().strip()
+                                if text and any(word in text for word in stt_engine.INTERRUPT_SYNONYMS):
+                                    print(f"\n[Interrupt!] Wake word detected mid-speech: '{text}'")
+                                    voice_engine.stop_speaking()
+                                    _was_interrupted[0] = True
+                                    break
+                            else:
+                                partial = _json.loads(rec.PartialResult())
+                                partial_text = partial.get("partial", "").lower().strip()
+                                if partial_text and any(word in partial_text for word in stt_engine.INTERRUPT_SYNONYMS):
+                                    print(f"\n[Interrupt!] Wake word detected (partial): '{partial_text}'")
+                                    voice_engine.stop_speaking()
+                                    _was_interrupted[0] = True
+                                    break
+                        
+                        stream.stop_stream()
+                        stream.close()
+                        pa.terminate()
+                    except Exception as e:
+                        print(f"[Interrupt monitor error]: {e}")
+                else:
+                    # Fallback: volume-based interrupt if Vosk is unavailable
+                    import struct
+                    try:
+                        pa = pyaudio.PyAudio()
+                        dev_info = pa.get_default_input_device_info()
+                        channels = min(int(dev_info['maxInputChannels']), 2)
+                        rate = int(dev_info['defaultSampleRate'])
+                        chunk = 2048
+                        
+                        stream = pa.open(
+                            format=pyaudio.paInt16,
+                            channels=channels,
+                            rate=rate,
+                            input=True,
+                            frames_per_buffer=chunk
+                        )
+                        
+                        print(f"[Interrupt monitor] Volume-based fallback active")
+                        
+                        baseline_samples = []
+                        for _ in range(8):
+                            if not voice_engine.is_speaking(): break
+                            data = stream.read(chunk, exception_on_overflow=False)
+                            samples = struct.unpack(f'<{len(data)//2}h', data)
+                            rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
+                            baseline_samples.append(rms)
+                        
+                        baseline = max(baseline_samples) if baseline_samples else 200
+                        threshold = max(baseline * 4.0, 16000)
+                        
+                        while not _is_done_speaking[0]:
+                            if not voice_engine.is_speaking():
+                                time.sleep(0.05)
+                                continue
+                            data = stream.read(chunk, exception_on_overflow=False)
+                            samples = struct.unpack(f'<{len(data)//2}h', data)
+                            rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
+                            if rms > threshold:
+                                print(f"\n[Interrupt!] Voice spike detected (level: {rms:.0f})")
+                                voice_engine.stop_speaking()
+                                _was_interrupted[0] = True
+                                break
+                        
+                        stream.stop_stream()
+                        stream.close()
+                        pa.terminate()
+                    except Exception as e:
+                        print(f"[Interrupt monitor error]: {e}")
             
-            speak_thread = threading.Thread(target=_speak_and_wait, daemon=True)
-            monitor_thread = threading.Thread(target=_monitor_mic_for_interrupt, daemon=True)
+            speak_thread = threading.Thread(target=_speak_streamed, daemon=True)
+            monitor_thread = threading.Thread(target=_monitor_wake_word_for_interrupt, daemon=True)
             
             speak_thread.start()
             monitor_thread.start()
             speak_thread.join()
+            llm_thread.join()
+            
+            # Finalize log
+            shared.push_log(alfred_text_container[0], "Alfred")
             
             # Clear caption
             shared.push_caption("")

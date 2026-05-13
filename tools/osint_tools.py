@@ -15,7 +15,10 @@ def search_web(query: str) -> str:
     This gives Alfred knowledge of current events and facts he doesn't know.
     """
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=3))
         
@@ -222,7 +225,10 @@ def generate_district_health_score(district_slug: str = None) -> str:
         
     try:
         # Step 1: Gather raw OSINT data
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         queries = [
             f"{district_slug} district literacy education statistics",
             f"{district_slug} infrastructure dam water economy",

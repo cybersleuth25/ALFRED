@@ -80,6 +80,10 @@ WAKE_SYNONYMS = [
     "alfred", "alford", "elfred", "alpha red", "all fred", "al fred",
     "albert", "elf red", "wake up", "hey alfred",
 ]
+# Interrupt-only synonyms: these will stop Alfred mid-speech but do NOT wake him from sleep
+INTERRUPT_SYNONYMS = WAKE_SYNONYMS + [
+    "buddy", "body", "but he", "but the",  # Common mis-transcriptions of "buddy"
+]
 OMEGA_SYNONYMS = [
     "begin protocol omega", "protocol omega", "mega protocol", "omegaprotocol",
 ]

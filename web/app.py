@@ -100,6 +100,128 @@ async def set_focus(request: Request):
     shared.focus_mode_active = data.get('focus_mode', False)
     return {"status": "success", "focus_mode": shared.focus_mode_active}
 
+
+
+# ==========================================
+# PROTOCOL OMEGA (STUDY MENTOR) ENDPOINTS
+# ==========================================
+
+@app.get('/api/omega/status')
+async def api_omega_status():
+    """Returns the current real-time state of Protocol Omega."""
+    try:
+        import shared
+        return JSONResponse({
+            "active": shared.omega_active,
+            "phase": shared.omega_phase,
+            "remaining": shared.omega_phase_remaining,
+            "cycle": shared.omega_pomodoro_cycle,
+            "distractions": shared.omega_distractions,
+            "session_id": shared.omega_session_id,
+            "session_start": shared.omega_session_start,
+            "daily_goal": getattr(shared, 'omega_daily_goal_minutes', 240),
+            "daily_progress": getattr(shared, 'omega_daily_progress', 0),
+            "streak": getattr(shared, 'omega_streak', 0),
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/omega/history')
+async def api_omega_history():
+    """Returns the last 10 study sessions."""
+    try:
+        import memory_engine
+        sessions = memory_engine.get_study_history(10)
+        return JSONResponse({"sessions": sessions})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/omega/stats')
+async def api_omega_stats():
+    """Returns aggregate study stats."""
+    try:
+        import memory_engine
+        stats = memory_engine.get_study_stats()
+        return JSONResponse({"stats": stats})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/omega/toggle')
+async def api_omega_toggle(request: Request):
+    """Activates or deactivates Protocol Omega from the frontend."""
+    try:
+        import study_mentor
+        import shared
+        
+        data = await request.json()
+        action = data.get('action', 'toggle')
+        
+        if action == 'activate':
+            if not shared.omega_active:
+                study_mentor.activate()
+                return JSONResponse({"status": "activated"})
+        elif action == 'deactivate':
+            if shared.omega_active:
+                study_mentor.deactivate()
+                return JSONResponse({"status": "deactivated"})
+        else: # toggle
+            if shared.omega_active:
+                study_mentor.deactivate()
+                return JSONResponse({"status": "deactivated"})
+            else:
+                study_mentor.activate()
+                return JSONResponse({"status": "activated"})
+                
+        return JSONResponse({"status": "unchanged"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/omega/break')
+async def api_omega_break():
+    """Manually triggers a short break."""
+    try:
+        import study_mentor
+        import shared
+        if shared.omega_active and shared.omega_phase == "focus":
+            with study_mentor._omega_lock:
+                shared.omega_phase = "short_break"
+                shared.omega_phase_remaining = 5 * 60
+                shared.push_omega_state()
+            return JSONResponse({"status": "break_started"})
+        return JSONResponse({"status": "ignored"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+
+# ==========================================
+# SPEECH CONTROL ENDPOINTS (Pause / Resume / Status)
+# ==========================================
+
+@app.post('/api/speech/pause')
+async def api_speech_pause():
+    """Toggle pause/resume on Alfred's speech. Returns new state."""
+    try:
+        import voice_engine
+        import shared
+        new_paused = voice_engine.toggle_pause()
+        shared.push_pause_state(new_paused)
+        return JSONResponse({"paused": new_paused, "speaking": voice_engine.is_speaking()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/speech/status')
+async def api_speech_status():
+    """Returns whether Alfred is currently speaking and/or paused."""
+    try:
+        import voice_engine
+        return JSONResponse({
+            "speaking": voice_engine.is_speaking(),
+            "paused": voice_engine.is_paused()
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 # ==========================================
 # COMMAND CENTER API ENDPOINTS (REAL DATA ONLY)
 # ==========================================
@@ -122,20 +244,8 @@ async def api_system():
                 "plugged": battery.power_plugged,
             }
         
-        # Get top 5 processes by memory
-        procs = []
-        for p in psutil.process_iter(['name', 'memory_percent', 'cpu_percent']):
-            try:
-                info = p.info
-                if info['memory_percent'] and info['memory_percent'] > 0.1:
-                    procs.append({
-                        "name": info['name'][:20],
-                        "mem": round(info['memory_percent'], 1),
-                        "cpu": round(info['cpu_percent'] or 0, 1)
-                    })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        procs.sort(key=lambda x: x['mem'], reverse=True)
+        # Get top 5 processes by memory (uses 10s cache to avoid redundant psutil scans)
+        procs = _get_cached_procs()
         
         return JSONResponse({
             "cpu": round(cpu_percent, 1),
@@ -148,7 +258,7 @@ async def api_system():
             "net_sent": round(net.bytes_sent / (1024**2), 1),
             "net_recv": round(net.bytes_recv / (1024**2), 1),
             "battery": battery_info,
-            "top_procs": procs[:5]
+            "top_procs": procs
         })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -279,28 +389,36 @@ async def api_weather():
 @app.get('/api/tracker')
 async def api_tracker():
     """Returns ISS position and crypto prices."""
-    iss = {"lat": 0, "lng": 0}
-    crypto = {}
     
-    try:
-        r = requests.get("http://api.open-notify.org/iss-now.json", timeout=5)
-        if r.status_code == 200:
-            pos = r.json().get("iss_position", {})
-            iss = {"lat": float(pos.get("latitude", 0)), "lng": float(pos.get("longitude", 0))}
-    except:
-        pass
+    def _fetch_iss():
+        try:
+            r = requests.get("http://api.open-notify.org/iss-now.json", timeout=5)
+            if r.status_code == 200:
+                pos = r.json().get("iss_position", {})
+                return {"lat": float(pos.get("latitude", 0)), "lng": float(pos.get("longitude", 0))}
+        except Exception:
+            pass
+        return {"lat": 0, "lng": 0}
     
-    try:
-        r = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            crypto = {
-                "BTC": {"price": data.get("bitcoin", {}).get("usd", 0), "change": round(data.get("bitcoin", {}).get("usd_24h_change", 0), 2)},
-                "ETH": {"price": data.get("ethereum", {}).get("usd", 0), "change": round(data.get("ethereum", {}).get("usd_24h_change", 0), 2)},
-                "SOL": {"price": data.get("solana", {}).get("usd", 0), "change": round(data.get("solana", {}).get("usd_24h_change", 0), 2)}
-            }
-    except:
-        pass
+    def _fetch_crypto():
+        try:
+            r = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true", timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                return {
+                    "BTC": {"price": data.get("bitcoin", {}).get("usd", 0), "change": round(data.get("bitcoin", {}).get("usd_24h_change", 0), 2)},
+                    "ETH": {"price": data.get("ethereum", {}).get("usd", 0), "change": round(data.get("ethereum", {}).get("usd_24h_change", 0), 2)},
+                    "SOL": {"price": data.get("solana", {}).get("usd", 0), "change": round(data.get("solana", {}).get("usd_24h_change", 0), 2)}
+                }
+        except Exception:
+            pass
+        return {}
+    
+    # Run both fetches concurrently without blocking the event loop
+    iss, crypto = await asyncio.gather(
+        asyncio.to_thread(_fetch_iss),
+        asyncio.to_thread(_fetch_crypto)
+    )
     
     return JSONResponse({"iss": iss, "crypto": crypto, "updated": datetime.now().strftime("%H:%M:%S")})
 

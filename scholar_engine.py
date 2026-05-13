@@ -41,7 +41,8 @@ def _get_db():
 
 def _get_embedding(text: str) -> np.ndarray:
     try:
-        response = ollama.embeddings(model=EMBEDDING_MODEL, prompt=text)
+        import shared
+        response = shared.local_client.embeddings(model=EMBEDDING_MODEL, prompt=text)
         return np.array(response["embedding"], dtype=np.float32)
     except Exception as e:
         print(f"[Scholar Error] Embedding failed: {e}")
@@ -135,13 +136,14 @@ def sync_library():
                           (doc_id, idx, chunk, emb.tobytes()))
             conn.commit()
             
-    # Remove deleted files from DB
-    for filename in tracked_docs:
-        if filename not in current_files:
-            print(f"[Scholar] Removing deleted document: {filename}")
-            c.execute("DELETE FROM documents WHERE filename = ?", (filename,))
-            
-    conn.commit()
+    # Remove deleted files from DB (batch operation instead of N+1 loop)
+    deleted_files = [f for f in tracked_docs if f not in current_files]
+    if deleted_files:
+        for f in deleted_files:
+            print(f"[Scholar] Removing deleted document: {f}")
+        placeholders = ",".join("?" * len(deleted_files))
+        c.execute(f"DELETE FROM documents WHERE filename IN ({placeholders})", deleted_files)
+        conn.commit()
     conn.close()
     print("[Scholar] Library sync complete.")
 
@@ -215,8 +217,8 @@ Context from local Library:
 Answer:"""
 
     try:
-        res = ollama.chat(
-            model=LLM_MODEL,
+        import llm_engine
+        res = llm_engine.chat(
             messages=[{'role': 'user', 'content': prompt}],
             options={'temperature': 0.1, 'num_predict': 200}
         )

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 interface ShaderBackgroundProps {
   state: "idle" | "listening" | "processing" | "speaking";
+  mood?: string;
 }
 
-const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
+const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // Add an artificial delay to the speaking state to sync with Edge TTS audio download latency
@@ -23,6 +24,11 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
     stateRef.current = delayedState;
   }, [delayedState]);
 
+  const moodRef = useRef(mood);
+  useEffect(() => {
+    moodRef.current = mood;
+  }, [mood]);
+
   const vsSource = `
     attribute vec4 aVertexPosition;
     void main() {
@@ -37,6 +43,9 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
     uniform float iTime;
     uniform float uSpread;
     uniform float uAmplitude;
+    uniform vec4 uBgColor1;
+    uniform vec4 uBgColor2;
+    uniform vec4 uLineColor;
 
     const float overallSpeed = 0.2;
     const float gridSmoothWidth = 0.015;
@@ -47,7 +56,6 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
     const float minorLineFrequency = 1.0;
     const vec4 gridColor = vec4(0.5);
     const float scale = 5.0;
-    const vec4 lineColor = vec4(0.4, 0.2, 0.8, 1.0);
     const float minLineWidth = 0.01;
     const float maxLineWidth = 0.2;
     const float lineSpeed = 1.0 * overallSpeed;
@@ -98,8 +106,6 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
       space.x += random(space.y * warpFrequency + iTime * warpSpeed + 2.0) * warpAmplitude * horizontalFade;
 
       vec4 lines = vec4(0.0);
-      vec4 bgColor1 = vec4(0.1, 0.1, 0.3, 1.0);
-      vec4 bgColor2 = vec4(0.3, 0.1, 0.5, 1.0);
 
       for(int l = 0; l < linesPerGroup; l++) {
         float normalizedLineIndex = float(l) / float(linesPerGroup);
@@ -116,10 +122,10 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
         float circle = drawCircle(circlePosition, 0.01, space) * 4.0;
 
         line = line + circle;
-        lines += line * lineColor * rand;
+        lines += line * uLineColor * rand;
       }
 
-      fragColor = mix(bgColor1, bgColor2, uv.x);
+      fragColor = mix(uBgColor1, uBgColor2, uv.x);
       fragColor *= verticalFade;
       fragColor.a = 1.0;
       fragColor += lines;
@@ -213,6 +219,9 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
         time: gl.getUniformLocation(shaderProgram, 'iTime'),
         spread: gl.getUniformLocation(shaderProgram, 'uSpread'),
         amplitude: gl.getUniformLocation(shaderProgram, 'uAmplitude'),
+        bgColor1: gl.getUniformLocation(shaderProgram, 'uBgColor1'),
+        bgColor2: gl.getUniformLocation(shaderProgram, 'uBgColor2'),
+        lineColor: gl.getUniformLocation(shaderProgram, 'uLineColor'),
       },
     };
 
@@ -237,6 +246,21 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
       speed: PRESETS.idle.speed,
       spread: PRESETS.idle.spread,
       amplitude: 1.0
+    };
+
+    const MOODS: Record<string, { bg1: number[], bg2: number[], line: number[] }> = {
+      calm: { bg1: [0.1, 0.1, 0.3, 1.0], bg2: [0.3, 0.1, 0.5, 1.0], line: [0.4, 0.2, 0.8, 1.0] },
+      happy: { bg1: [0.4, 0.3, 0.1, 1.0], bg2: [0.6, 0.4, 0.2, 1.0], line: [0.9, 0.7, 0.2, 1.0] },
+      alert: { bg1: [0.4, 0.1, 0.1, 1.0], bg2: [0.6, 0.1, 0.2, 1.0], line: [0.9, 0.2, 0.2, 1.0] },
+      sad: { bg1: [0.0, 0.05, 0.2, 1.0], bg2: [0.1, 0.1, 0.4, 1.0], line: [0.2, 0.3, 0.8, 1.0] },
+      angry: { bg1: [0.3, 0.0, 0.0, 1.0], bg2: [0.5, 0.1, 0.0, 1.0], line: [1.0, 0.1, 0.1, 1.0] },
+      thinking: { bg1: [0.1, 0.2, 0.3, 1.0], bg2: [0.1, 0.4, 0.5, 1.0], line: [0.2, 0.8, 0.9, 1.0] },
+    };
+
+    const currentColorState = {
+      bg1: [...MOODS.calm.bg1],
+      bg2: [...MOODS.calm.bg2],
+      line: [...MOODS.calm.line],
     };
 
     let startTime = Date.now();
@@ -275,6 +299,15 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
       // Lerp amplitude a bit slower for smoother movement
       currentUniforms.amplitude += (targetAmplitude - currentUniforms.amplitude) * Math.min(6.0 * dt, 1.0);
 
+      // Lerp Colors based on mood
+      const targetMood = MOODS[moodRef.current] || MOODS.calm;
+      const colorLerp = Math.min(1.5 * dt, 1.0); // slower color transition
+      for(let i = 0; i < 4; i++) {
+        currentColorState.bg1[i] += (targetMood.bg1[i] - currentColorState.bg1[i]) * colorLerp;
+        currentColorState.bg2[i] += (targetMood.bg2[i] - currentColorState.bg2[i]) * colorLerp;
+        currentColorState.line[i] += (targetMood.line[i] - currentColorState.line[i]) * colorLerp;
+      }
+
       gl.clearColor(0.0, 0.0, 0.0, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -284,6 +317,10 @@ const ShaderBackground = ({ state }: ShaderBackgroundProps) => {
       gl.uniform1f(programInfo.uniformLocations.time, currentTime * currentUniforms.speed * pulseMultiplier);
       gl.uniform1f(programInfo.uniformLocations.spread, currentUniforms.spread);
       gl.uniform1f(programInfo.uniformLocations.amplitude, currentUniforms.amplitude);
+      
+      gl.uniform4f(programInfo.uniformLocations.bgColor1, currentColorState.bg1[0], currentColorState.bg1[1], currentColorState.bg1[2], currentColorState.bg1[3]);
+      gl.uniform4f(programInfo.uniformLocations.bgColor2, currentColorState.bg2[0], currentColorState.bg2[1], currentColorState.bg2[2], currentColorState.bg2[3]);
+      gl.uniform4f(programInfo.uniformLocations.lineColor, currentColorState.line[0], currentColorState.line[1], currentColorState.line[2], currentColorState.line[3]);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
       gl.vertexAttribPointer(
