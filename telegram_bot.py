@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 import time
 from dotenv import load_dotenv
+import telegram
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import llm_engine
@@ -21,6 +22,8 @@ GEMINI_TELEGRAM_KEY = os.getenv("GEMINI_TELEGRAM_API_KEY", os.getenv("GEMINI_API
 # SECURITY
 # =============================================
 
+import functools
+
 def _is_authorized(update: Update) -> bool:
     """Check if the message sender is the authorized user."""
     user_id = str(update.effective_user.id)
@@ -29,19 +32,24 @@ def _is_authorized(update: Update) -> bool:
         return False
     return True
 
+def authorized_only(func):
+    """Decorator to enforce user authorization for Telegram bot handlers."""
+    @functools.wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        if not _is_authorized(update):
+            await update.message.reply_text("Unauthorized access.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
 
 # =============================================
 # COMMAND HANDLERS
 # =============================================
 
+@authorized_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
-    if not _is_authorized(update):
-        await update.message.reply_text(
-            f"Unauthorized. Your Telegram ID is {update.effective_user.id}. "
-            "Please add this to the .env file if you are the authorized user."
-        )
-        return
     await update.message.reply_text(
         "Good day, sir. Alfred Protocol Mobile Link established.\n\n"
         "Available commands:\n"
@@ -52,12 +60,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@authorized_only
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Returns a full system health report."""
-    if not _is_authorized(update):
-        await update.message.reply_text("Unauthorized access.")
-        return
-
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
 
     try:
@@ -76,11 +81,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             batt_str = "🖥️ Desktop (no battery)"
 
-        # Protocol Omega
+        # Focus Mode
         try:
             import study_mentor
             omega_str = "🔴 ACTIVE" if study_mentor.is_active() else "⚪ Inactive"
-        except:
+        except Exception:
             omega_str = "⚪ Unknown"
 
         # Memory stats
@@ -95,7 +100,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💾 Disk: {disk.percent}% ({round(disk.used / (1024**3), 0)}/{round(disk.total / (1024**3), 0)} GB)\n"
             f"{batt_str}\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
-            f"🎯 Protocol Omega: {omega_str}\n"
+            f"🎯 Focus Mode: {omega_str}\n"
             f"🧩 Semantic Memories: {mem_count}\n"
             f"📋 Pending Tasks: {pending_tasks}\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
@@ -108,12 +113,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error generating status: {e}")
 
 
+@authorized_only
 async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Takes a screenshot of the PC and sends it to the user."""
-    if not _is_authorized(update):
-        await update.message.reply_text("Unauthorized access.")
-        return
-
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='upload_photo')
 
     try:
@@ -141,49 +143,68 @@ async def screenshot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # MESSAGE HANDLERS
 # =============================================
 
+async def keep_typing(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Periodically sends typing action to keep the indicator alive."""
+    try:
+        while True:
+            await context.bot.send_chat_action(chat_id=chat_id, action='typing')
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+
+
+@authorized_only
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Routes text messages through Alfred's brain."""
-    if not _is_authorized(update):
-        await update.message.reply_text(
-            f"Unauthorized access. Your Telegram ID is {update.effective_user.id}."
-        )
-        return
-
     user_text = update.message.text
     print(f"\n[Telegram Bot] Received remote command: '{user_text}'")
 
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+    chat_id = update.effective_chat.id
+    typing_task = asyncio.create_task(keep_typing(context, chat_id))
 
     try:
-        response = llm_engine.generate_response(user_text)
+        # Run synchronous LLM call in a separate thread to prevent event loop blocking
+        response = await asyncio.to_thread(llm_engine.generate_response, user_text)
+        
         # Telegram has a 4096 char limit per message
         if len(response) > 4000:
-            # Split into chunks
-            for i in range(0, len(response), 4000):
-                await update.message.reply_text(response[i:i+4000])
+            # Smart chunking by double newlines
+            chunks = response.split("\n\n")
+            current_msg = ""
+            for chunk in chunks:
+                if len(current_msg) + len(chunk) + 2 > 4000:
+                    if current_msg:
+                        await update.message.reply_text(current_msg)
+                    current_msg = chunk
+                else:
+                    current_msg += ("\n\n" + chunk if current_msg else chunk)
+            if current_msg:
+                await update.message.reply_text(current_msg)
         else:
             await update.message.reply_text(response)
     except Exception as e:
         error_msg = f"Error processing command remotely: {e}"
         print(f"[Telegram Bot] {error_msg}")
         await update.message.reply_text(error_msg)
+    finally:
+        typing_task.cancel()
 
 
+@authorized_only
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receives a photo, analyzes it using Gemini Vision, and responds."""
-    if not _is_authorized(update):
-        await update.message.reply_text("Unauthorized access.")
-        return
-
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+    chat_id = update.effective_chat.id
+    typing_task = asyncio.create_task(keep_typing(context, chat_id))
 
     try:
         # Download the highest resolution photo
         photo = update.message.photo[-1]  # Last element = highest res
         file = await context.bot.get_file(photo.file_id)
 
-        # Save to temp file
-        tmp_path = os.path.join(tempfile.gettempdir(), f"alfred_telegram_{photo.file_id}.jpg")
+        # Save to temp file safely
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
+            tmp_path = tmp_file.name
+            
         await file.download_to_drive(tmp_path)
 
         # Get the caption (user's question about the image) or use default
@@ -217,21 +238,32 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[Telegram Bot] Image analysis: {analysis[:100]}...")
 
         if len(analysis) > 4000:
-            for i in range(0, len(analysis), 4000):
-                await update.message.reply_text(analysis[i:i+4000])
+            chunks = analysis.split("\n\n")
+            current_msg = ""
+            for chunk in chunks:
+                if len(current_msg) + len(chunk) + 2 > 4000:
+                    if current_msg:
+                        await update.message.reply_text(current_msg)
+                    current_msg = chunk
+                else:
+                    current_msg += ("\n\n" + chunk if current_msg else chunk)
+            if current_msg:
+                await update.message.reply_text(current_msg)
         else:
             await update.message.reply_text(f"🔍 *Image Analysis:*\n\n{analysis}", parse_mode='Markdown')
-
-        # Clean up temp file
-        try:
-            os.remove(tmp_path)
-        except:
-            pass
 
     except Exception as e:
         error_msg = f"Image analysis failed: {e}"
         print(f"[Telegram Bot] {error_msg}")
         await update.message.reply_text(error_msg)
+    finally:
+        typing_task.cancel()
+        # Clean up temp file
+        if 'tmp_path' in locals():
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 # =============================================
@@ -243,6 +275,9 @@ def start_telegram_bot_loop():
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN.startswith("your_"):
         print("[Telegram Bot] Skipped: No valid token found in .env.")
         return
+
+    if not TELEGRAM_ALLOWED_USER_ID:
+        print("[Telegram Bot] Warning: TELEGRAM_ALLOWED_USER_ID is missing from .env. The bot will reject all interactions.")
 
     print("[Telegram Bot] Initializing background listener...")
 
@@ -261,12 +296,23 @@ def start_telegram_bot_loop():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Start polling with robust retry loop
-    while True:
+    # Start polling with bounded retry loop
+    max_retries = 5
+    for attempt in range(max_retries):
         try:
-            print("[Telegram Bot] Starting polling...")
-            app.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
-            break # Exits if stopped gracefully
+            print(f"[Telegram Bot] Starting polling (attempt {attempt + 1}/{max_retries})...")
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                close_loop=False,
+                drop_pending_updates=True,
+            )
+            break  # Exits if stopped gracefully
+        except telegram.error.Conflict:
+            wait = min(30, 10 * (attempt + 1))
+            print(f"\n[Telegram Bot] Conflict — another instance may be running. Retry in {wait}s...")
+            time.sleep(wait)
         except Exception as e:
             print(f"\n[Telegram Bot] Network or polling error: {e}. Restarting in 5s...")
             time.sleep(5)
+    else:
+        print("[Telegram Bot] Failed after max retries. Another bot instance is likely still running.")

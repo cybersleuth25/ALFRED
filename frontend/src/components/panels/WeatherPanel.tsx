@@ -82,8 +82,7 @@ export default function WeatherPanel() {
 
   if (loading || !data) {
     return (
-      <div className="glass-panel accent-cyan h-full flex flex-col">
-        <div className="scanline-effect" />
+      <div className="card h-full flex flex-col relative">
         <div className="flex items-center gap-2.5 mb-5">
           <WeatherIcon desc="clear" size={16} />
           <span className="text-[11px] tracking-[0.15em] text-white/50 font-light">Weather</span>
@@ -96,23 +95,22 @@ export default function WeatherPanel() {
   }
 
   return (
-    <div className="glass-panel accent-cyan h-full flex flex-col overflow-hidden">
-      <div className="scanline-effect" />
+    <div className="card h-full flex flex-col overflow-hidden relative">
       
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2.5">
           <WeatherIcon desc={data.description} size={16} />
-          <span className="text-[11px] tracking-[0.15em] text-white/50 font-light">{data.city}</span>
+          <span className="text-[11px] tracking-[0.25em] text-white/50 font-semibold">{data.city}</span>
         </div>
         <span className="text-[9px] text-white/15 font-mono tabular-nums">{data.updated?.slice(0, 5)}</span>
       </div>
 
       {/* Current Conditions */}
       <div className="flex items-baseline gap-3 mb-1">
-        <span className="text-[34px] font-extralight text-white/90 leading-none tabular-nums">{data.temp_c}</span>
+        <span className="text-[34px] font-extralight text-cyan-50 leading-none tabular-nums text-shadow-glow">{data.temp_c}</span>
         <span className="text-[13px] font-extralight text-white/25">°C</span>
-        <span className="text-[11px] text-white/30 font-light capitalize ml-1">{data.description}</span>
+        <span className="text-[11px] text-cyan-400/80 font-medium capitalize ml-1 tracking-wider">{data.description}</span>
       </div>
 
       <div className="flex gap-6 mb-4 mt-3">
@@ -132,13 +130,13 @@ export default function WeatherPanel() {
 
       {/* Rain Advisory — left accent border instead of emoji */}
       {data.rain_chance >= 30 && (
-        <div className={`alert-border flex items-center gap-2 py-2 mb-3 text-[10px] font-light ${
+        <div className={`alert-border flex items-center gap-2 py-2 mb-3 text-[10px] font-medium tracking-wide ${
           data.rain_chance >= 60 
-            ? 'border-blue-400/50 text-blue-300/70' 
-            : 'border-amber-400/40 text-amber-300/60'
-        }`}>
+            ? 'border-blue-400/50 text-blue-300' 
+            : 'border-amber-400/50 text-amber-300'
+        }`} style={{ background: data.rain_chance >= 60 ? 'linear-gradient(90deg, rgba(96,165,250,0.1) 0%, transparent 100%)' : 'linear-gradient(90deg, rgba(251,191,36,0.1) 0%, transparent 100%)' }}>
           <span>{data.rain_chance >= 60 ? 'Rain likely — carry an umbrella' : 'Possible rain later'}</span>
-          <span className="ml-auto font-mono tabular-nums text-white/30">{data.rain_chance}%</span>
+          <span className="ml-auto font-mono tabular-nums opacity-60 text-shadow-glow">{data.rain_chance}%</span>
         </div>
       )}
 

@@ -109,6 +109,19 @@ def _get_pending_task_count() -> int:
         return 0
 
 
+BRIEFING_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Alfred_Workspace", "briefing_cache.json")
+
+def _is_offline() -> bool:
+    """Checks for active internet connectivity with a fast timeout."""
+    import socket
+    try:
+        socket.setdefaulttimeout(1.5)
+        # Check by connecting to a reliable public DNS IP address
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+        return False
+    except Exception:
+        return True
+
 def generate_startup_briefing(user_name: str) -> str:
     """
     Generates a concise, REAL intelligence briefing for Alfred to speak on first wake.
@@ -127,29 +140,71 @@ def generate_startup_briefing(user_name: str) -> str:
     else:
         time_context = "late night"
 
-    # Gather Data in parallel (cuts ~15s sequential → ~5s parallel)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        weather_future = pool.submit(_get_weather_data)
-        task_future = pool.submit(_get_pending_task_count)
-        batt_future = pool.submit(_get_battery_warning)
-        news_future = pool.submit(_get_top_headline)
-        
+    weather = {}
+    headline = ""
+    cached_note = ""
+
+    # Check connection. If offline, load cached data to avoid blocking timeouts.
+    if _is_offline():
+        print("[Briefing] System is offline. Loading cached intelligence...")
         try:
-            weather = weather_future.result(timeout=10)
-        except Exception:
-            weather = {}
-        try:
-            task_count = task_future.result(timeout=5)
-        except Exception:
-            task_count = 0
-        try:
-            batt_warning = batt_future.result(timeout=3)
-        except Exception:
-            batt_warning = ""
-        try:
-            headline = news_future.result(timeout=8)
-        except Exception:
-            headline = ""
+            import json
+            if os.path.exists(BRIEFING_CACHE_PATH):
+                with open(BRIEFING_CACHE_PATH, "r", encoding="utf-8") as f:
+                    cache = json.load(f)
+                    weather = cache.get("weather", {})
+                    headline = cache.get("headline", "")
+                    cached_at_str = cache.get("cached_at", "")
+                    if cached_at_str:
+                        cached_dt = datetime.fromisoformat(cached_at_str)
+                        time_diff = datetime.now() - cached_dt
+                        if time_diff.total_seconds() < 86400:
+                            cached_note = f" (cached {int(time_diff.total_seconds() // 3600)} hours ago)"
+                        else:
+                            cached_note = f" (cached on {cached_dt.strftime('%B %d')})"
+        except Exception as e:
+            print(f"[Briefing] Failed to load cached briefing: {e}")
+            
+        task_count = _get_pending_task_count()
+        batt_warning = _get_battery_warning()
+    else:
+        # Gather Data in parallel (cuts ~15s sequential → ~5s parallel)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            weather_future = pool.submit(_get_weather_data)
+            task_future = pool.submit(_get_pending_task_count)
+            batt_future = pool.submit(_get_battery_warning)
+            news_future = pool.submit(_get_top_headline)
+            
+            try:
+                weather = weather_future.result(timeout=10)
+            except Exception:
+                weather = {}
+            try:
+                task_count = task_future.result(timeout=5)
+            except Exception:
+                task_count = 0
+            try:
+                batt_warning = batt_future.result(timeout=3)
+            except Exception:
+                batt_warning = ""
+            try:
+                headline = news_future.result(timeout=8)
+            except Exception:
+                headline = ""
+
+        # Save successfully retrieved data to cache
+        if weather or headline:
+            try:
+                import json
+                os.makedirs(os.path.dirname(BRIEFING_CACHE_PATH), exist_ok=True)
+                with open(BRIEFING_CACHE_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "weather": weather,
+                        "headline": headline,
+                        "cached_at": datetime.now().isoformat()
+                    }, f)
+            except Exception as e:
+                print(f"[Briefing] Failed to cache briefing data: {e}")
 
     # Parse the gathered data
     temp = weather.get("temp_c", "?") if weather else "?"
@@ -165,7 +220,7 @@ def generate_startup_briefing(user_name: str) -> str:
     task_text = f"{task_count} pending tasks." if task_count > 0 else "No pending tasks."
 
     # Construct strict prompt for the LLM
-    data_points = f"- Current Time: {time_context}\n- Weather in {USER_CITY}: {temp}°C, {desc}. {rain_text}\n- Tasks: {task_text}\n"
+    data_points = f"- Current Time: {time_context}\n- Weather in {USER_CITY}: {temp}°C, {desc}{cached_note}. {rain_text}\n- Tasks: {task_text}\n"
     if batt_warning:
         data_points += f"- Alert: {batt_warning}\n"
     if headline:

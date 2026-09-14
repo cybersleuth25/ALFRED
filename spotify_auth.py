@@ -28,8 +28,8 @@ from dotenv import load_dotenv, set_key
 
 load_dotenv()
 
-CLIENT_ID = "20caa4dbf24e4c288bbaad1e2c0d576d"
-CLIENT_SECRET = "6bf42c1ee9c647d3be1978467910576c"
+CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
+CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 SCOPES = "user-read-currently-playing user-read-playback-state user-modify-playback-state user-read-recently-played"
 
@@ -73,6 +73,11 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    if not CLIENT_ID or not CLIENT_SECRET:
+        print("ERROR: SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in your .env file.")
+        print("Get these from https://developer.spotify.com/dashboard")
+        sys.exit(1)
+
     print("=" * 50)
     print("  ALFRED — Spotify Authorization Setup")
     print("=" * 50)

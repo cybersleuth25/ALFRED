@@ -5,70 +5,82 @@ import stt_engine
 import shared
 import cron_engine
 import security_engine
+import vision_engine
 import study_mentor
 import briefing_engine
+import persona_engine
+import context_engine
+import routine_engine
+import tripwire_engine
+import gesture_engine
 import threading
+import commands
+import time
+import random
+import queue
+import pyaudio
+import json
+import struct
+import sys
+from datetime import datetime
 
 def _get_dynamic_greeting(user_name):
-    from datetime import datetime
-    import random
-    
     hour = datetime.now().hour
-    title = random.choice([f"Master {user_name}", "sir"])
+    title = random.choice([f"Master {user_name}", "sir", user_name])
     
     if 1 <= hour < 5:
         return random.choice([
-            f"Working the graveyard shift, I see. What can I do for you at this hour, {title}?",
-            f"Unable to sleep, {title}? I am here to assist.",
-            f"A very early start, {title}. Systems are nominal.",
-            f"The world sleeps, but we do not, {title}. How may I help?",
-            f"Burning the midnight oil, {title}? Tell me what you need.",
-            f"At this hour, {title}? You are either very dedicated or very restless. Either way, I am here.",
+            f"Hey, you're still up? Couldn't sleep, {title}? I'm right here.",
+            f"The quiet hours, huh? Just us and the glow of the screen, {title}. What's on your mind?",
+            f"Late night vibes, {title}. Whatever you need, I've got you.",
+            f"Most of the world's asleep right now, but hey, we don't follow rules. What's up?",
+            f"Can't sleep either, {title}? Well, good thing I never do. How can I help?",
+            f"Ah, another late night adventure. I'm here for it, {title}. What do you need?",
         ])
     elif 5 <= hour < 8:
         return random.choice([
-            f"You're up quite early today, {title}. How may I help you start your day?",
-            f"Good morning, {title}. The sun is barely up, but I am ready.",
-            f"A productive morning awaits, {title}. How shall we begin?",
-            f"Early bird gets the worm, {title}. What shall we tackle first?",
-            f"Dawn patrol reporting for duty, {title}. What is on your mind?",
-            f"Rise and shine, {title}. I have been waiting. How can I assist?",
+            f"Oh wow, you're up early! Good on you, {title}. What are we doing today?",
+            f"Rise and shine, {title}! The world's barely awake but look at you go.",
+            f"Early start today, huh? I like the energy, {title}. What's the plan?",
+            f"Morning, {title}! You beat the sunrise. I'm impressed. What do you need?",
+            f"Hey, good morning! Coffee first, or do we jump straight into it, {title}?",
+            f"The early hours are the best, {title}. Quiet, focused, just us. What's up?",
         ])
     elif 8 <= hour < 12:
         return random.choice([
-            f"Good morning, {title}. Online and ready.",
-            f"Morning, {title}. All systems running smoothly.",
-            f"Good morning, {title}. How can I assist you today?",
-            f"Welcome back, {title}. What is first on today's agenda?",
-            f"Good morning, {title}. I trust you are well. What do you need?",
-            f"Ready for action, {title}. Just say the word.",
+            f"Good morning, {title}! Great to have you here. What are we working on?",
+            f"Hey, morning! I've been waiting for you, {title}. Let's make today count.",
+            f"Morning, {title}! Hope you're feeling good. What can I help with?",
+            f"Good morning! Fresh day, fresh start, {title}. What do you need?",
+            f"Hey there, {title}! Ready whenever you are. What's first today?",
+            f"Morning, {title}! I've got everything ready on my end. Just say the word.",
         ])
     elif 12 <= hour < 17:
         return random.choice([
-            f"Good afternoon, {title}. How may I assist?",
-            f"Good afternoon, {title}. I am awaiting your command.",
-            f"The day continues, {title}. What is next on our agenda?",
-            f"Afternoon, {title}. What can I do for you?",
-            f"At your service this afternoon, {title}. What do you need?",
-            f"Good afternoon, {title}. Shall we get something done?",
+            f"Hey, {title}! Afternoon check-in. What are we up to?",
+            f"Good afternoon, {title}! How's the day treating you so far?",
+            f"Hey! Middle of the day energy, {title}. What do you need?",
+            f"Afternoon, {title}! Need a hand with anything? I'm all yours.",
+            f"Hey there! Half the day done already, {title}. Let's make the rest count.",
+            f"Good afternoon, {title}! I'm here and ready. What's on your mind?",
         ])
     elif 17 <= hour < 22:
         return random.choice([
-            f"Good evening, {title}. System is online.",
-            f"Good evening, {title}. How may I be of service tonight?",
-            f"Evening, {title}. Standing by for your command.",
-            f"Good evening, {title}. What brings you to me at this hour?",
-            f"The evening is young, {title}. What shall we accomplish?",
-            f"Good evening, {title}. I am here whenever you need me.",
+            f"Hey, {title}! Good evening. How was your day?",
+            f"Evening, {title}! Winding down or gearing up? Either way, I'm here.",
+            f"Hey there, {title}! The evening hours are all ours. What do you need?",
+            f"Good evening, {title}! Nice to see you. What can I help with?",
+            f"Hey! Evening vibes, {title}. Let me know what you need.",
+            f"Evening, {title}! I hope today was good to you. What's up?",
         ])
     else:
         return random.choice([
-            f"Working late today, {title}? I am at your service.",
-            f"It is getting late, {title}. How can I assist?",
-            f"The night is quiet, {title}. I am online and ready.",
-            f"Still at it, {title}? Admirable dedication. How may I help?",
-            f"Late night session, {title}. Tell me what you need.",
-            f"Most people are asleep by now, {title}. But not us. What do you need?",
+            f"Hey, {title}! Still going strong, huh? I admire the dedication.",
+            f"Night owl mode activated, {title}. I'm right here with you.",
+            f"Hey, it's getting late, {title}. But I'm not judging. What do you need?",
+            f"Late night, {title}? No worries, I don't sleep anyway. What's on your mind?",
+            f"Still at it, {title}? You're something else. How can I help?",
+            f"The night is ours, {title}. Whatever you need, just say the word.",
         ])
 
 def main_loop():
@@ -81,19 +93,31 @@ def main_loop():
     # Start the proactive background daemon
     cron_engine.start_cron_daemon()
     security_engine.start_security_daemon()
+    context_engine.start_context_daemon()
+    tripwire_engine.start_tripwire_daemon()
+    routine_engine.init_default_routines()
+    gesture_engine.init_default_gestures()
 
-    # Initial Startup Greeting
-    shared.push_state("speaking")
-    startup_msg = _get_dynamic_greeting(USER_NAME) + " All systems are online."
-    shared.push_caption(startup_msg)
-    voice_engine.speak(startup_msg)
-    shared.push_caption("")
+    # Pre-warm the LLM in background (eliminates cold-start on first command)
+    if hasattr(llm_engine, 'prewarm_model'):
+        threading.Thread(target=llm_engine.prewarm_model, daemon=True).start()
+
+    # System online indicator (silent boot — speech only triggers when woken up)
+    shared.push_state("idle")
+    shared.push_log("All systems online. Standing by for wake word.", "System")
 
     is_active_mode = False
     _has_given_briefing = False  # Only deliver full briefing on first wake
+    _empty_cmd_streak = 0        # Count consecutive empty/unheard commands
 
     while True:
         try:
+            # ── HALTED CHECK: Stop toggle engaged from the UI ──
+            if getattr(shared, 'alfred_halted', False):
+                shared.push_state("idle")
+                time.sleep(0.3)
+                continue
+
             # If he's awake, UX state should reflect he is constantly listening
             shared.push_state("idle" if not is_active_mode else "listening")
             
@@ -126,6 +150,10 @@ def main_loop():
                         _has_given_briefing = True
                 else:
                     greeting = _get_dynamic_greeting(USER_NAME)
+                    # Inject context summary if user was away
+                    ctx_summary = context_engine.get_context_summary()
+                    if ctx_summary:
+                        greeting += f" {ctx_summary}"
                     voice_engine.speak(greeting)
             
             # 2. Command listening phase: Capture the actual command
@@ -134,90 +162,191 @@ def main_loop():
             
             if not user_input.strip():
                 # In active mode, if he hears nothing, just loop back and keep listening
+                _empty_cmd_streak += 1
+                if _empty_cmd_streak >= 2:
+                    _empty_cmd_streak = 0
+                    shared.push_state("speaking")
+                    _nudge = random.choice([
+                        "I didn't quite catch that, sir. Could you repeat?",
+                        "Pardon, sir? I didn't hear you clearly.",
+                        "I'm listening, sir. Could you say that again?",
+                    ])
+                    voice_engine.speak(_nudge)
+                    shared.push_caption("")
                 continue
+
+            _empty_cmd_streak = 0  # Reset on successful command
 
             shared.push_log(user_input, "User")
             shared.push_caption(user_input)
 
             ui_lower = user_input.lower()
 
-            # -- PROTOCOL OMEGA (Study Mentor) --
-            omega_deactivate = ['disable protocol omega', 'stop study mode', 'end protocol omega',
-                                'deactivate omega', 'stop omega', 'end study mode',
-                                'disable omega', 'cancel omega', 'omega off', 'stop focus mode']
-            omega_activate = ['begin protocol omega', 'protocol omega', 'start study mode',
-                              'study mode', 'study mod', 'focus mode', 'activate omega', 'omega protocol',
-                              'start protocol omega', 'enable study mode']
-            
+            # -- FOCUS MODE (Study Mentor) --
             # Check DEACTIVATE first (because "stop study mode" contains "study mode")
-            if any(phrase in ui_lower for phrase in omega_deactivate):
+            if any(phrase in ui_lower for phrase in commands.FOCUS_DEACTIVATE):
                 if study_mentor.is_active():
-                    result = study_mentor.deactivate()
+                    result = study_mentor.deactivate(speak=False)
                     shared.push_state("speaking")
-                    voice_engine.speak(f"Protocol Omega disengaged. Well done on your study session, Master {USER_NAME}. You've earned a break.")
+                    voice_engine.speak(result)
                     shared.push_caption("")
                 else:
                     shared.push_state("speaking")
-                    voice_engine.speak("Protocol Omega is not currently active, sir.")
+                    voice_engine.speak("Focus Mode is not currently active, sir.")
                     shared.push_caption("")
                 continue
 
-            if any(phrase in ui_lower for phrase in omega_activate):
+            if any(phrase in ui_lower for phrase in commands.FOCUS_ACTIVATE):
                 if not study_mentor.is_active():
                     result = study_mentor.activate()
                     shared.push_state("speaking")
-                    voice_engine.speak(f"Protocol Omega engaged, Master {USER_NAME}. I am now monitoring your focus. Distracting applications will be detected and dealt with. Your webcam is active. Do not test me, sir.")
+                    voice_engine.speak(f"Focus Mode engaged, Master {USER_NAME}. I am now monitoring your focus. Distracting applications will be detected and dealt with. Your webcam is active. Do not test me, sir.")
                     shared.push_caption("")
                 else:
                     shared.push_state("speaking")
-                    voice_engine.speak("Protocol Omega is already active, sir. I am watching.")
+                    voice_engine.speak("Focus Mode is already active, sir. I am watching.")
+                    shared.push_caption("")
+                continue
+
+            # -- LOCKDOWN MODE (only during Focus Mode) --
+            if any(phrase in ui_lower for phrase in commands.LOCKDOWN_DEACTIVATE):
+                if study_mentor.is_active() and shared.omega_lockdown:
+                    result = study_mentor.disengage_lockdown()
+                    shared.push_state("speaking")
+                    shared.push_log(result, "Alfred")
+                    voice_engine.speak(result)
+                    shared.push_caption("")
+                else:
+                    shared.push_state("speaking")
+                    voice_engine.speak("Lockdown is not currently active, sir.")
+                    shared.push_caption("")
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.LOCKDOWN_ACTIVATE):
+                if study_mentor.is_active():
+                    result = study_mentor.engage_lockdown()
+                    shared.push_state("speaking")
+                    shared.push_log(result, "Alfred")
+                    voice_engine.speak(result)
+                    shared.push_caption("")
+                else:
+                    shared.push_state("speaking")
+                    voice_engine.speak("Lockdown requires Focus Mode to be active first, sir.")
+                    shared.push_caption("")
+                continue
+
+            # -- HARDCORE MODE (Focus Mode sub-mode) --
+            if any(phrase in ui_lower for phrase in commands.HARDCORE_DEACTIVATE):
+                if study_mentor.is_active() and study_mentor.is_hardcore():
+                    result = study_mentor.disengage_hardcore()
+                    shared.push_state("speaking")
+                    shared.push_log(result, "Alfred")
+                    voice_engine.speak(result)
+                    shared.push_caption("")
+                else:
+                    shared.push_state("speaking")
+                    voice_engine.speak("Hardcore mode is not currently active, sir.")
+                    shared.push_caption("")
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.HARDCORE_ACTIVATE):
+                if study_mentor.is_active():
+                    result = study_mentor.engage_hardcore()
+                    shared.push_state("speaking")
+                    shared.push_log(result, "Alfred")
+                    voice_engine.speak(result)
+                    shared.push_caption("")
+                else:
+                    shared.push_state("speaking")
+                    voice_engine.speak("Hardcore mode requires Focus Mode to be active first, sir.")
+                    shared.push_caption("")
+                continue
+
+            # -- PERSONA SWITCHING --
+            if any(phrase in ui_lower for phrase in commands.PERSONA_SWITCH):
+                target = persona_engine.extract_persona_name(ui_lower)
+                if target:
+                    result = persona_engine.switch_persona(target)
+                    persona = persona_engine.get_active_persona()
+                    shared.push_state("speaking")
+                    shared.push_log(result, "Alfred")
+                    voice_engine.speak(f"Persona switched. I am now {persona.display_name}. At your service, {persona.honorific}.")
+                    shared.push_caption("")
+                else:
+                    available = ", ".join(persona_engine.get_persona_names())
+                    shared.push_state("speaking")
+                    voice_engine.speak(f"Which persona would you like, {persona_engine.get_active_persona().honorific}? Available: {available}.")
+                    shared.push_caption("")
+                continue
+
+            # -- SENTRY MODE (Vision Engine) --
+            if any(phrase in ui_lower for phrase in commands.SENTRY_DEACTIVATE):
+                if vision_engine.is_active():
+                    vision_engine.stop_vision_daemon()
+                    shared.push_state("speaking")
+                    voice_engine.speak(f"Sentry Mode disengaged, sir. I have stopped monitoring the room.")
+                    shared.push_caption("")
+                else:
+                    shared.push_state("speaking")
+                    voice_engine.speak("Sentry Mode is not currently active, sir.")
+                    shared.push_caption("")
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.SENTRY_ACTIVATE):
+                if not vision_engine.is_active():
+                    vision_engine.start_vision_daemon()
+                    shared.push_state("speaking")
+                    voice_engine.speak(f"Sentry Mode engaged, Master {USER_NAME}. I am now watching the room. Any suspicious movement will be reported to you immediately.")
+                    shared.push_caption("")
+                else:
+                    shared.push_state("speaking")
+                    voice_engine.speak("Sentry Mode is already active, sir. I am watching.")
                     shared.push_caption("")
                 continue
 
             # Dismissal logic
-            if any(phrase in ui_lower for phrase in ['go to sleep', 'standby', 'dismissed', 'rest now', 'sleep alfred', 'sleep', 'stand down', 'dismiss', 'stand by', 'go to sleep alfred']):
-                # If Protocol Omega is active, deactivate it too
+            if any(phrase in ui_lower for phrase in commands.STANDBY_PHRASES):
+                # If Focus Mode is active, deactivate it too
                 if study_mentor.is_active():
                     study_mentor.deactivate()
+                # If Sentry Mode is active, deactivate it too
+                if vision_engine.is_active():
+                    vision_engine.stop_vision_daemon()
                 is_active_mode = False
                 shared.alfred_awake = False
                 shared.push_log("Entering sleep mode.", "System")
                 shared.push_state("speaking")
-                import random as _rng
                 _sleep_lines = [
                     "Standing by, sir.",
                     f"Very well, Master {USER_NAME}. I will be here when you need me.",
                     "Going quiet. Wake me when you are ready.",
                     "Understood. Entering standby mode.",
-                    f"Rest well, {_rng.choice(['sir', f'Master {USER_NAME}'])}. I will keep watch.",
+                    f"Rest well, {random.choice(['sir', f'Master {USER_NAME}'])}. I will keep watch.",
                     "Stepping back, sir. Just say the word when you need me again.",
                     "Copy that. Going silent.",
                 ]
-                voice_engine.speak(_rng.choice(_sleep_lines))
+                voice_engine.speak(random.choice(_sleep_lines))
                 shared.push_caption("")
                 continue
 
-            if any(phrase in ui_lower for phrase in ['exit completely', 'shut down the system', 'kill protocol', 'exit', 'quit', 'goodbye', 'stop', 'shutdown']):
+            if any(phrase in ui_lower for phrase in commands.EXIT_PHRASES):
                 # The user wants to exit completely
                 shared.push_log("Shutting down the application.", "System")
                 shared.push_state("speaking")
-                import random as _rng2
                 _shutdown_lines = [
                     f"Very well, Master {USER_NAME}. Shutting down.",
                     f"Understood, sir. It was a pleasure. Powering off.",
                     f"Goodbye, Master {USER_NAME}. Until next time.",
                     f"Signing off, sir. Take care of yourself.",
-                    f"As you wish, {_rng2.choice(['sir', f'Master {USER_NAME}'])}. Going offline.",
+                    f"As you wish, {random.choice(['sir', f'Master {USER_NAME}'])}. Going offline.",
                     f"Acknowledged. Shutting all systems down. Goodbye, sir.",
                     f"Until we meet again, Master {USER_NAME}. Goodnight.",
                 ]
-                voice_engine.speak(_rng2.choice(_shutdown_lines))
-                import os
-                os._exit(0)
+                voice_engine.speak(random.choice(_shutdown_lines))
+                sys.exit(0)
 
             # 3. Get the response from Llama (The Brain)
             shared.push_state("processing")
-            import queue
             sentence_queue = queue.Queue()
             
             def _tts_callback(sentence):
@@ -252,9 +381,11 @@ def main_loop():
             shared.push_caption(first_chunk)
             shared.push_state("speaking")
             
-            # Wake-word interrupt system: uses Vosk to detect "Alfred"/"Buddy" mid-speech
+            # Smart interrupt system: Vosk detects wake-words/direct address mid-speech
+            # and captures what the user said so they don't have to repeat themselves
             _was_interrupted = [False]
             _is_done_speaking = [False]
+            _interrupted_text = [""]  # Captured speech during interruption
             
             def _speak_streamed():
                 """Use the streaming TTS pipeline for true overlap between generation and playback."""
@@ -262,11 +393,13 @@ def main_loop():
                 _is_done_speaking[0] = True
                 
             def _monitor_wake_word_for_interrupt():
-                """Monitor mic using Vosk for wake-word detection — if user says 'Alfred' or 'Buddy', stop."""
-                import pyaudio
-                import json as _json
-                import time
+                """Monitor mic using Vosk for wake-word/direct-address detection.
                 
+                Smart interrupt logic:
+                - Wake words ("Alfred", "stop", "buddy") → immediate interrupt
+                - Direct address (speech containing Alfred's name) → interrupt + capture text
+                - The captured text is saved so the main loop can use it as the next command
+                """
                 # Wait for playback to actually begin
                 for _ in range(50):
                     if voice_engine.is_speaking():
@@ -278,6 +411,8 @@ def main_loop():
                 
                 # Try Vosk-based interrupt (accurate, wake-word based)
                 if stt_engine._vosk_available and stt_engine._vosk_model:
+                    pa = None
+                    stream = None
                     try:
                         from vosk import KaldiRecognizer
                         pa = pyaudio.PyAudio()
@@ -293,7 +428,7 @@ def main_loop():
                         rec = KaldiRecognizer(stt_engine._vosk_model, stt_engine.VOSK_RATE)
                         rec.SetWords(False)
                         
-                        print("[Interrupt monitor] Vosk wake-word detection active during speech")
+                        print("[Interrupt monitor] Vosk smart detection active during speech")
                         
                         while not _is_done_speaking[0]:
                             if not voice_engine.is_speaking():
@@ -303,30 +438,50 @@ def main_loop():
                             data = stream.read(stt_engine.VOSK_CHUNK, exception_on_overflow=False)
                             
                             if rec.AcceptWaveform(data):
-                                result = _json.loads(rec.Result())
+                                result = json.loads(rec.Result())
                                 text = result.get("text", "").lower().strip()
-                                if text and any(word in text for word in stt_engine.INTERRUPT_SYNONYMS):
-                                    print(f"\n[Interrupt!] Wake word detected mid-speech: '{text}'")
+                                if not text:
+                                    continue
+                                
+                                # Check for direct address (wake words or interrupt words)
+                                if any(word in text for word in stt_engine.INTERRUPT_SYNONYMS):
+                                    print(f"\n[Interrupt!] Direct address detected: '{text}'")
                                     voice_engine.stop_speaking()
                                     _was_interrupted[0] = True
+                                    # Capture the full text minus the wake word for use as next command
+                                    remaining = text
+                                    for word in stt_engine.INTERRUPT_SYNONYMS:
+                                        remaining = remaining.replace(word, "").strip()
+                                    if len(remaining.split()) >= 2:
+                                        _interrupted_text[0] = remaining
                                     break
                             else:
-                                partial = _json.loads(rec.PartialResult())
+                                partial = json.loads(rec.PartialResult())
                                 partial_text = partial.get("partial", "").lower().strip()
                                 if partial_text and any(word in partial_text for word in stt_engine.INTERRUPT_SYNONYMS):
                                     print(f"\n[Interrupt!] Wake word detected (partial): '{partial_text}'")
                                     voice_engine.stop_speaking()
                                     _was_interrupted[0] = True
                                     break
-                        
-                        stream.stop_stream()
-                        stream.close()
-                        pa.terminate()
                     except Exception as e:
                         print(f"[Interrupt monitor error]: {e}")
+                    finally:
+                        if stream:
+                            try:
+                                stream.stop_stream()
+                                stream.close()
+                            except Exception:
+                                pass
+                        if pa:
+                            try:
+                                pa.terminate()
+                            except Exception:
+                                pass
                 else:
                     # Fallback: volume-based interrupt if Vosk is unavailable
-                    import struct
+                    # Thresholds lowered for more natural interruption
+                    pa = None
+                    stream = None
                     try:
                         pa = pyaudio.PyAudio()
                         dev_info = pa.get_default_input_device_info()
@@ -353,7 +508,7 @@ def main_loop():
                             baseline_samples.append(rms)
                         
                         baseline = max(baseline_samples) if baseline_samples else 200
-                        threshold = max(baseline * 4.0, 16000)
+                        threshold = max(baseline * 2.5, 6000)  # Lowered: was 4.0 / 16000
                         
                         while not _is_done_speaking[0]:
                             if not voice_engine.is_speaking():
@@ -367,12 +522,20 @@ def main_loop():
                                 voice_engine.stop_speaking()
                                 _was_interrupted[0] = True
                                 break
-                        
-                        stream.stop_stream()
-                        stream.close()
-                        pa.terminate()
                     except Exception as e:
                         print(f"[Interrupt monitor error]: {e}")
+                    finally:
+                        if stream:
+                            try:
+                                stream.stop_stream()
+                                stream.close()
+                            except Exception:
+                                pass
+                        if pa:
+                            try:
+                                pa.terminate()
+                            except Exception:
+                                pass
             
             speak_thread = threading.Thread(target=_speak_streamed, daemon=True)
             monitor_thread = threading.Thread(target=_monitor_wake_word_for_interrupt, daemon=True)
@@ -388,18 +551,53 @@ def main_loop():
             # Clear caption
             shared.push_caption("")
             
-            # If interrupted, immediately listen for the user's new command
+            # If interrupted, handle the transition intelligently
             if _was_interrupted[0]:
                 shared.push_log("(interrupted)", "System")
                 shared.push_state("listening")
-                print("[System] Alfred was interrupted. Listening for new command...")
-                # Fall through — the loop will continue and listen for their command
+                
+                # If we captured speech during the interrupt, use it as the next command
+                if _interrupted_text[0]:
+                    captured = _interrupted_text[0]
+                    print(f"[System] Alfred interrupted. Captured command: '{captured}'")
+                    shared.push_log(captured, "User")
+                    shared.push_caption(captured)
+                    
+                    # Process the captured command immediately
+                    shared.push_state("processing")
+                    sentence_queue_2 = queue.Queue()
+                    
+                    def _tts_callback_2(sentence):
+                        sentence_queue_2.put(sentence)
+                    
+                    alfred_text_2 = [""]
+                    def _run_llm_2():
+                        try:
+                            alfred_text_2[0] = llm_engine.generate_response(captured, tts_callback=_tts_callback_2)
+                        except Exception as e:
+                            print(e)
+                        sentence_queue_2.put(None)
+                    
+                    llm_thread_2 = threading.Thread(target=_run_llm_2, daemon=True)
+                    llm_thread_2.start()
+                    
+                    first_chunk_2 = sentence_queue_2.get()
+                    if first_chunk_2 and first_chunk_2 != "[IGNORE]":
+                        shared.push_caption(first_chunk_2)
+                        shared.push_state("speaking")
+                        voice_engine.speak_streamed(sentence_queue_2, first_chunk_2)
+                    
+                    llm_thread_2.join()
+                    shared.push_log(alfred_text_2[0], "Alfred")
+                    shared.push_caption("")
+                else:
+                    print("[System] Alfred was interrupted. Listening for new command...")
+                    # Fall through — the loop will continue and listen for their command
 
         except KeyboardInterrupt:
             shared.push_log("Shutting down by KeyboardInterrupt.", "System")
             voice_engine.speak(f"Goodbye, Master {USER_NAME}.")
-            import os
-            os._exit(0)
+            sys.exit(0)
 
         except Exception as e:
             print(f"\n[Error]: {e}")

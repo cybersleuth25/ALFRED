@@ -1,0 +1,51 @@
+# ==========================================
+# Alfred AI Assistant — Python Dependencies
+# ==========================================
+# Install: pip install -r requirements.txt
+# Note: Some packages are optional (marked below)
+
+# --- Core ---
+groq>=0.5.0               # Groq LLM inference
+python-dotenv>=1.0.0      # .env file loading
+requests>=2.31.0          # HTTP client
+
+# --- Web Server ---
+fastapi>=0.115.0          # Web framework
+uvicorn>=0.30.0           # ASGI server
+sse-starlette>=2.0.0      # Server-Sent Events
+jinja2>=3.1.0             # Template engine (FastAPI dependency)
+
+# --- Voice & Audio ---
+pyaudio>=0.2.14           # Microphone input
+pyttsx3>=2.90             # Fallback TTS engine
+vosk>=0.3.45              # Offline wake-word / STT
+chatterbox-tts            # Emotional TTS with voice cloning (Resemble AI)
+
+# --- Computer Vision ---
+opencv-python>=4.9.0      # Webcam capture & face detection
+numpy>=2.3.0              # Numerical operations
+uniface[cpu]              # Unified Face Analysis
+
+# --- System Control ---
+psutil>=5.9.0             # System metrics (CPU, RAM, battery)
+pygetwindow>=0.0.9        # Window title detection (Focus Mode)
+ctypes-callable>=1.0.0    # Windows API calls (volume, etc.)
+
+# --- Database & Embeddings ---
+# sqlite3 is included in Python stdlib
+sentence-transformers>=2.2.0  # Local vector embeddings (no API needed)
+faiss-cpu>=1.7.0         # FAISS vector search (GPU: faiss-gpu)
+mediapipe>=0.10.0        # Face landmark detection (drowsiness)
+PyPDF2>=3.0.0            # PDF text extraction (Scholar Engine)
+python-docx>=1.0.0       # DOCX text extraction (Scholar Engine)
+schedule>=1.2.0          # Watcher daemon scheduling
+win10toast-persist       # Windows toast notifications (Watcher)
+pywebview>=5.0           # Desktop window wrapper (optional)
+pycaw>=20240210          # Windows audio control (Focus Mode DND)
+
+# --- Telegram Remote Control ---
+python-telegram-bot>=21.0  # Telegram bot framework
+google-genai>=1.0.0        # Gemini API (screen analysis, skill engine)
+
+# --- OSINT Geolocation ---
+geopy>=2.4.0               # Forward/reverse geocoding (Nominatim)

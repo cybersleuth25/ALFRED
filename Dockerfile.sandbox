@@ -1,15 +1,21 @@
 # Dockerfile for Alfred's Dynamic Skill Sandbox
 FROM python:3.10-slim
 
-# Create a non-root user for security
-RUN useradd -m -s /bin/bash alfred
+# Upgrade pip and create a non-root user for security
+RUN pip install --no-cache-dir --upgrade pip && \
+    useradd -m -s /bin/bash alfred
 
 # Set working directory
 WORKDIR /skills
 
 # Install common data and web libraries that Alfred might need for scripts
-# This prevents the LLM from trying to pip install things on the fly
-RUN pip install --no-cache-dir requests beautifulsoup4 numpy pandas urllib3
+# Pin versions for reproducible builds
+RUN pip install --no-cache-dir \
+    requests==2.32.* \
+    beautifulsoup4==4.* \
+    numpy==1.* \
+    pandas==2.* \
+    urllib3==2.*
 
 # Set ownership to the non-root user
 RUN chown -R alfred:alfred /skills

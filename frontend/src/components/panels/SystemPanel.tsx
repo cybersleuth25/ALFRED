@@ -18,14 +18,14 @@ function Bar({ label, pct }: { label: string; pct: number }) {
   const barClass = pct > 85 ? 'bar-gradient-danger' : pct > 60 ? 'bar-gradient-warn' : 'bar-gradient-normal';
   return (
     <div className="flex items-center gap-3 mb-3">
-      <span className="label w-8 shrink-0">{label}</span>
-      <div className="flex-1 h-[5px] bg-white/[0.04] rounded-full overflow-hidden">
+      <span className="label w-8 shrink-0 tracking-widest text-[9px]">{label}</span>
+      <div className="flex-1 h-[6px] bg-black/40 rounded-full overflow-hidden border border-white/5 shadow-inner">
         <div 
           className={`h-full rounded-full transition-all duration-[1500ms] ease-out ${barClass}`}
-          style={{ width: `${Math.min(pct, 100)}%` }}
+          style={{ width: `${Math.min(pct, 100)}%`, filter: 'drop-shadow(0 0 4px currentColor)' }}
         />
       </div>
-      <span className="text-[10px] font-mono text-white/40 w-9 text-right tabular-nums">{pct}%</span>
+      <span className="text-[10px] font-mono text-cyan-400 w-9 text-right tabular-nums text-shadow-glow">{pct}%</span>
     </div>
   );
 }
@@ -69,16 +69,14 @@ export default function SystemPanel() {
 
   if (!data) {
     return (
-      <div className="glass-panel accent-amber h-full flex items-center justify-center">
-        <div className="scanline-effect" />
+      <div className="card h-full flex items-center justify-center">
         <div className="text-[11px] text-white/15 animate-pulse font-light tracking-wider">Connecting...</div>
       </div>
     );
   }
 
   return (
-    <div className="glass-panel accent-amber h-full flex flex-col overflow-hidden">
-      <div className="scanline-effect" />
+    <div className="card h-full flex flex-col overflow-hidden relative">
       
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-2.5">

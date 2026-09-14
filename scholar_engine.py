@@ -3,15 +3,16 @@ import sqlite3
 import json
 import time
 import numpy as np
-import ollama
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- Configuration ---
 WORKSPACE_DIR = Path(__file__).parent / "Alfred_Workspace"
 LIBRARY_DIR = WORKSPACE_DIR / "Library"
 DB_PATH = WORKSPACE_DIR / "library_index.sqlite"
-EMBEDDING_MODEL = "nomic-embed-text"
-LLM_MODEL = "qwen2.5-coder:3b"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
 # Ensure directories exist
 os.makedirs(LIBRARY_DIR, exist_ok=True)
@@ -41,12 +42,14 @@ def _get_db():
 
 def _get_embedding(text: str) -> np.ndarray:
     try:
-        import shared
-        response = shared.local_client.embeddings(model=EMBEDDING_MODEL, prompt=text)
-        return np.array(response["embedding"], dtype=np.float32)
+        import memory_engine
+        embedding = memory_engine._generate_embedding(text)
+        if embedding:
+            return np.array(embedding, dtype=np.float32)
+        return None
     except Exception as e:
         print(f"[Scholar Error] Embedding failed: {e}")
-        return np.zeros(768, dtype=np.float32) # nomic-embed-text uses 768 dims
+        return None
 
 def _chunk_text(text: str, chunk_size: int = 500, overlap: int = 100):
     words = text.split()
@@ -132,6 +135,9 @@ def sync_library():
             chunks = _chunk_text(text)
             for idx, chunk in enumerate(chunks):
                 emb = _get_embedding(chunk)
+                if emb is None:
+                    print(f"[Scholar] Skipping chunk {idx} of {filename} — embedding failed.")
+                    continue
                 c.execute("INSERT INTO chunks (doc_id, chunk_index, text_content, embedding) VALUES (?, ?, ?, ?)",
                           (doc_id, idx, chunk, emb.tobytes()))
             conn.commit()
@@ -147,15 +153,23 @@ def sync_library():
     conn.close()
     print("[Scholar] Library sync complete.")
 
+_last_sync_time = 0
+
 def query_library(query: str, top_k: int = 3) -> str:
     """
     Embeds the query, finds the most relevant document chunks via cosine similarity,
     and returns a summarized answer using the LLM.
     If no relevant information is found, returns a failure string so the agent can fallback to web search.
     """
-    sync_library() # Always sync before querying to catch newly dropped files
+    # Sync at most once per 5 minutes to avoid re-scanning on every query
+    global _last_sync_time
+    if time.time() - _last_sync_time > 300:
+        sync_library()
+        _last_sync_time = time.time()
     
     query_emb = _get_embedding(query)
+    if query_emb is None:
+        return "Embedding generation failed. Cannot search the library."
     
     conn = _get_db()
     c = conn.cursor()

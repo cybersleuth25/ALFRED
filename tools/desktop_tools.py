@@ -104,3 +104,19 @@ def analyze_screen(query: str) -> str:
         return f"Screen Vision Analysis: {response.text}"
     except Exception as e:
         return f"Error analyzing screen: {e}"
+
+def read_screen_text(query: str = "") -> str:
+    """Uses Tesseract OCR to read raw text from the screen."""
+    try:
+        from PIL import ImageGrab
+        import pytesseract
+        
+        screenshot = ImageGrab.grab()
+        text = pytesseract.image_to_string(screenshot)
+        if not text.strip():
+            return "No text detected on the screen."
+        return f"Raw Screen Text:\n{text.strip()}"
+    except Exception as e:
+        if "tesseract is not installed" in str(e).lower() or isinstance(e, FileNotFoundError):
+            return "Error: Tesseract OCR is not installed or not in PATH. Please install Tesseract (https://github.com/UB-Mannheim/tesseract/wiki)."
+        return f"Error reading screen text: {e}"

@@ -3,9 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 interface ShaderBackgroundProps {
   state: "idle" | "listening" | "processing" | "speaking";
   mood?: string;
+  face_x?: number;
+  face_y?: number;
 }
 
-const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
+const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // Add an artificial delay to the speaking state to sync with Edge TTS audio download latency
@@ -24,11 +26,6 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
     stateRef.current = delayedState;
   }, [delayedState]);
 
-  const moodRef = useRef(mood);
-  useEffect(() => {
-    moodRef.current = mood;
-  }, [mood]);
-
   const vsSource = `
     attribute vec4 aVertexPosition;
     void main() {
@@ -36,101 +33,167 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
     }
   `;
 
-  // Fragment shader source code
+  // Fragment shader source code - Premium 3D Glass Orb
   const fsSource = `
     precision highp float;
     uniform vec2 iResolution;
     uniform float iTime;
-    uniform float uSpread;
+    uniform float uState; // 0=idle, 1=listening, 2=processing, 3=speaking
     uniform float uAmplitude;
-    uniform vec4 uBgColor1;
-    uniform vec4 uBgColor2;
-    uniform vec4 uLineColor;
+    uniform vec2 uMouse;
 
-    const float overallSpeed = 0.2;
-    const float gridSmoothWidth = 0.015;
-    const float axisWidth = 0.05;
-    const float majorLineWidth = 0.025;
-    const float minorLineWidth = 0.0125;
-    const float majorLineFrequency = 5.0;
-    const float minorLineFrequency = 1.0;
-    const vec4 gridColor = vec4(0.5);
-    const float scale = 5.0;
-    const float minLineWidth = 0.01;
-    const float maxLineWidth = 0.2;
-    const float lineSpeed = 1.0 * overallSpeed;
-    const float lineAmplitude = 1.0;
-    const float lineFrequency = 0.2;
-    const float warpSpeed = 0.2 * overallSpeed;
-    const float warpFrequency = 0.5;
-    const float warpAmplitude = 1.0;
-    const float offsetFrequency = 0.5;
-    const float offsetSpeed = 1.33 * overallSpeed;
-    const float minOffsetSpread = 0.6;
-    const float maxOffsetSpread = 2.0;
-    const int linesPerGroup = 16;
-
-    #define drawCircle(pos, radius, coord) smoothstep(radius + gridSmoothWidth, radius, length(coord - (pos)))
-    #define drawSmoothLine(pos, halfWidth, t) smoothstep(halfWidth, 0.0, abs(pos - (t)))
-    #define drawCrispLine(pos, halfWidth, t) smoothstep(halfWidth + gridSmoothWidth, halfWidth, abs(pos - (t)))
-    #define drawPeriodicLine(freq, width, t) drawCrispLine(freq / 2.0, width, abs(mod(t, freq) - (freq) / 2.0))
-
-    float drawGridLines(float axis) {
-      return drawCrispLine(0.0, axisWidth, axis)
-            + drawPeriodicLine(majorLineFrequency, majorLineWidth, axis)
-            + drawPeriodicLine(minorLineFrequency, minorLineWidth, axis);
+    // Generate internal color blobs (Dark Grey / Silver Theme)
+    vec3 getInterior(vec3 p, float t, float state) {
+        float timeScale = (state == 2.0) ? 2.0 : (state == 3.0) ? 1.5 : 0.8;
+        t *= timeScale;
+        
+        vec3 col1 = vec3(0.08, 0.08, 0.08); // dark grey
+        vec3 col2 = vec3(0.12, 0.12, 0.12); // slightly lighter
+        vec3 col3 = vec3(0.20, 0.20, 0.20); // medium grey
+        vec3 col4 = vec3(0.35, 0.35, 0.35); // silver highlights
+        
+        float n1 = sin(p.x * 4.0 + t) * cos(p.y * 3.0 - t*0.8) * sin(p.z * 3.0 + t);
+        float n2 = sin(p.x * 5.0 - t*1.2) * cos(p.y * 4.0 + t*1.1) * sin(p.z * 2.0 - t);
+        float n3 = sin(p.x * 2.0 + t*0.8) * cos(p.y * 5.0 - t*0.9) * sin(p.z * 4.0 + t*0.7);
+        
+        vec3 final = mix(col1, col2, smoothstep(-1.0, 1.0, n1));
+        final = mix(final, col3, smoothstep(-0.5, 1.0, n2));
+        final = mix(final, col4, smoothstep(-0.5, 1.0, n3));
+        
+        // processing state adds subtle amber glow
+        if (state == 2.0) {
+            final = mix(final, vec3(0.5, 0.4, 0.2), 0.3 + 0.2 * sin(t * 3.0));
+        }
+        // speaking state adds pulsing brightness
+        if (state == 3.0) {
+            final *= 1.0 + 0.3 * sin(t * 4.0);
+        }
+        
+        return final * 1.5; // brightness boost
     }
 
-    float drawGrid(vec2 space) {
-      return min(1.0, drawGridLines(space.x) + drawGridLines(space.y));
-    }
-
-    float random(float t) {
-      return (cos(t) + cos(t * 1.3 + 1.3) + cos(t * 1.4 + 1.4)) / 3.0;
-    }
-
-    float getPlasmaY(float x, float horizontalFade, float offset) {
-      return random(x * lineFrequency + iTime * lineSpeed) * horizontalFade * lineAmplitude * uAmplitude + offset;
+    // Distance to capsule for eyes
+    float sdCapsule( vec2 p, vec2 a, vec2 b, float r ) {
+        vec2 pa = p - a, ba = b - a;
+        float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+        return length( pa - ba*h ) - r;
     }
 
     void main() {
-      vec2 fragCoord = gl_FragCoord.xy;
-      vec4 fragColor;
-      vec2 uv = fragCoord.xy / iResolution.xy;
-      vec2 space = (fragCoord - iResolution.xy / 2.0) / iResolution.x * 2.0 * scale;
+        vec2 uv = (gl_FragCoord.xy - 0.5 * iResolution.xy) / min(iResolution.x, iResolution.y);
+        
+        // Base dark background (transparent so CSS background shows through, or solid)
+        vec3 col = vec3(0.0); // Transparent base to let cinematic bg through if we use alpha
+        
+        // Ray setup
+        vec3 ro = vec3(0.0, 0.0, -2.5);
+        vec3 rd = normalize(vec3(uv, 1.0));
+        
+        // Sphere params (Orb stays still)
+        vec3 sC = vec3(0.0, 0.0, 0.0);
+        float baseR = 0.65;
+        // Pulse slightly on listening
+        float pulse = (uState == 1.0) ? 0.02 * sin(iTime * 3.0) : 0.0;
+        float sR = baseR + uAmplitude * 0.05 + pulse;
+        
+        // Intersection
+        vec3 oc = ro - sC;
+        float b = dot(oc, rd);
+        float c = dot(oc, oc) - sR * sR;
+        float h = b * b - c;
+        
+        // Ambient glow behind orb
+        float dist = length(uv);
+        float glowAmount = smoothstep(1.5, sR - 0.2, dist);
+        vec3 glowColor = getInterior(vec3(uv, 0.0), iTime * 0.2, uState) * 0.3;
+        col += glowColor * glowAmount;
+        
+        // Floor reflection (fake)
+        float floorY = -0.7;
+        if(uv.y < floorY) {
+            float reflectIntensity = smoothstep(floorY - 0.4, floorY, uv.y) * smoothstep(0.8, 0.0, abs(uv.x));
+            col += glowColor * reflectIntensity * 0.8;
+        }
+        
+        float alpha = clamp(glowAmount + (uv.y < floorY ? 0.5 : 0.0), 0.0, 1.0);
 
-      float horizontalFade = 1.0 - (cos(uv.x * 6.28) * 0.5 + 0.5);
-      float verticalFade = 1.0 - (cos(uv.y * 6.28) * 0.5 + 0.5);
-
-      space.y += random(space.x * warpFrequency + iTime * warpSpeed) * warpAmplitude * (0.5 + horizontalFade);
-      space.x += random(space.y * warpFrequency + iTime * warpSpeed + 2.0) * warpAmplitude * horizontalFade;
-
-      vec4 lines = vec4(0.0);
-
-      for(int l = 0; l < linesPerGroup; l++) {
-        float normalizedLineIndex = float(l) / float(linesPerGroup);
-        float offsetTime = iTime * offsetSpeed;
-        float offsetPosition = float(l) + space.x * offsetFrequency;
-        float rand = random(offsetPosition + offsetTime) * 0.5 + 0.5;
-        float halfWidth = mix(minLineWidth, maxLineWidth, rand * horizontalFade) / 2.0;
-        float offset = random(offsetPosition + offsetTime * (1.0 + normalizedLineIndex)) * mix(minOffsetSpread, maxOffsetSpread, horizontalFade) * uSpread;
-        float linePosition = getPlasmaY(space.x, horizontalFade, offset);
-        float line = drawSmoothLine(linePosition, halfWidth, space.y) / 2.0 + drawCrispLine(linePosition, halfWidth * 0.15, space.y);
-
-        float circleX = mod(float(l) + iTime * lineSpeed, 25.0) - 12.0;
-        vec2 circlePosition = vec2(circleX, getPlasmaY(circleX, horizontalFade, offset));
-        float circle = drawCircle(circlePosition, 0.01, space) * 4.0;
-
-        line = line + circle;
-        lines += line * uLineColor * rand;
-      }
-
-      fragColor = mix(uBgColor1, uBgColor2, uv.x);
-      fragColor *= verticalFade;
-      fragColor.a = 1.0;
-      fragColor += lines;
-
-      gl_FragColor = fragColor;
+        // Render orb if hit
+        if (h > 0.0) {
+            float t = -b - sqrt(h);
+            if (t > 0.0) {
+                vec3 p = ro + t * rd;
+                vec3 n = normalize(p - sC);
+                vec3 v = -rd;
+                
+                // Fresnel for glass edge
+                float fresnel = pow(1.0 - max(dot(n, v), 0.0), 3.5);
+                
+                // Interior colors
+                vec3 interior = getInterior(p, iTime * 0.5, uState);
+                
+                // Specular highlight
+                vec3 lightDir = normalize(vec3(1.0, 1.0, -1.0));
+                vec3 reflectDir = reflect(rd, n);
+                float spec = pow(max(dot(reflectDir, lightDir), 0.0), 32.0);
+                
+                // Eyes (Only visible in idle or listening)
+                float eyeAlpha = 0.0;
+                if (uState == 0.0 || uState == 1.0) {
+                    // Eyes move tracking the face/mouse
+                    vec2 eyeOffset = (uMouse - 0.5) * 0.08;
+                    vec2 a1 = vec2(-0.16, 0.12) + eyeOffset;
+                    vec2 b1 = vec2(-0.16, 0.02) + eyeOffset;
+                    vec2 a2 = vec2(0.16, 0.12) + eyeOffset;
+                    vec2 b2 = vec2(0.16, 0.02) + eyeOffset;
+                    
+                    // Slightly wider when listening
+                    float eyeW = (uState == 1.0) ? 0.025 : 0.018;
+                    
+                    float d1 = sdCapsule(p.xy, a1, b1, eyeW);
+                    float d2 = sdCapsule(p.xy, a2, b2, eyeW);
+                    
+                    float eyes = smoothstep(0.01, 0.0, min(d1, d2));
+                    
+                    // Blink logic
+                    float blink = smoothstep(0.0, 0.1, abs(sin(iTime * 0.4 + 1.0)) - 0.02);
+                    if (uState == 1.0) blink = 1.0; // keep eyes open when listening
+                    
+                    eyeAlpha = eyes * blink;
+                }
+                
+                vec3 orbCol = interior * (0.5 + fresnel * 2.5) + vec3(1.0) * spec * 0.8;
+                // Add eyes
+                orbCol = mix(orbCol, vec3(1.0, 1.0, 1.0), eyeAlpha);
+                
+                // Anti-aliasing edge (perfect circle relative to sphere center)
+                float edge = smoothstep(sR, sR - 0.015, length(p.xy - sC.xy));
+                col = mix(col, orbCol, edge);
+                alpha = max(alpha, edge);
+            }
+        }
+        
+        // --- Audio Visualizer Ring ---
+        // Render glowing rings outside the orb when speaking (uState == 3.0) or processing (uState == 2.0)
+        float distToCenter = length(uv - sC.xy);
+        if (uState == 3.0 || uState == 2.0) {
+            float ringRadius = baseR + 0.1 + (uAmplitude * 0.3); // Expands with audio amplitude
+            float ringThickness = 0.02 + (uAmplitude * 0.05);
+            
+            // Multiple rings for a cool effect
+            float ring1 = smoothstep(ringThickness, 0.0, abs(distToCenter - ringRadius));
+            float ring2 = smoothstep(ringThickness * 0.5, 0.0, abs(distToCenter - (ringRadius + 0.08)));
+            
+            vec3 ringColor = (uState == 3.0) ? vec3(0.4, 0.8, 1.0) : vec3(1.0, 0.6, 0.2); // Blue for speaking, amber for processing
+            
+            // Pulse opacity
+            float ringAlpha = (ring1 + ring2) * (0.3 + uAmplitude * 0.7);
+            
+            // Add ring color to background using additive blending
+            col += ringColor * ringAlpha;
+            alpha = max(alpha, ringAlpha);
+        }
+        
+        gl_FragColor = vec4(col, alpha);
     }
   `;
 
@@ -142,23 +205,7 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
     gl.compileShader(shader);
 
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      const infoLog = gl.getShaderInfoLog(shader);
-      console.error('Shader compile error: ', infoLog);
-      
-      // Inject error into DOM so we can read it visually
-      const errDiv = document.createElement('div');
-      errDiv.style.position = 'fixed';
-      errDiv.style.top = '10px';
-      errDiv.style.left = '10px';
-      errDiv.style.color = 'red';
-      errDiv.style.backgroundColor = 'rgba(0,0,0,0.8)';
-      errDiv.style.padding = '20px';
-      errDiv.style.zIndex = '9999';
-      errDiv.style.fontFamily = 'monospace';
-      errDiv.style.whiteSpace = 'pre-wrap';
-      errDiv.innerText = 'GLSL Error:\\n' + infoLog;
-      document.body.appendChild(errDiv);
-
+      console.error('Shader compile error: ', gl.getShaderInfoLog(shader));
       gl.deleteShader(shader);
       return null;
     }
@@ -191,7 +238,8 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const gl = canvas.getContext('webgl');
+    // Enable alpha for transparent background blending
+    const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false });
     if (!gl) {
       console.warn('WebGL not supported.');
       return;
@@ -217,11 +265,9 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
       uniformLocations: {
         resolution: gl.getUniformLocation(shaderProgram, 'iResolution'),
         time: gl.getUniformLocation(shaderProgram, 'iTime'),
-        spread: gl.getUniformLocation(shaderProgram, 'uSpread'),
+        state: gl.getUniformLocation(shaderProgram, 'uState'),
         amplitude: gl.getUniformLocation(shaderProgram, 'uAmplitude'),
-        bgColor1: gl.getUniformLocation(shaderProgram, 'uBgColor1'),
-        bgColor2: gl.getUniformLocation(shaderProgram, 'uBgColor2'),
-        lineColor: gl.getUniformLocation(shaderProgram, 'uLineColor'),
+        mouse: gl.getUniformLocation(shaderProgram, 'uMouse'),
       },
     };
 
@@ -234,38 +280,25 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    const PRESETS = {
-      idle:       { speed: 1.0, spread: 1.0 },
-      listening:  { speed: 1.2, spread: 1.2 }, // slowed from 1.5
-      processing: { speed: 2.0, spread: 0.8 }, // slowed from 3.5
-      speaking:   { speed: 1.1, spread: 0.0 }, // slowed from 2.0, spread 0.0 merges all lines
+    const STATE_MAP: Record<string, number> = {
+      idle: 0.0,
+      listening: 1.0,
+      processing: 2.0,
+      speaking: 3.0,
     };
 
-    // Smooth transition state
-    const currentUniforms = {
-      speed: PRESETS.idle.speed,
-      spread: PRESETS.idle.spread,
-      amplitude: 1.0
-    };
-
-    const MOODS: Record<string, { bg1: number[], bg2: number[], line: number[] }> = {
-      calm: { bg1: [0.1, 0.1, 0.3, 1.0], bg2: [0.3, 0.1, 0.5, 1.0], line: [0.4, 0.2, 0.8, 1.0] },
-      happy: { bg1: [0.4, 0.3, 0.1, 1.0], bg2: [0.6, 0.4, 0.2, 1.0], line: [0.9, 0.7, 0.2, 1.0] },
-      alert: { bg1: [0.4, 0.1, 0.1, 1.0], bg2: [0.6, 0.1, 0.2, 1.0], line: [0.9, 0.2, 0.2, 1.0] },
-      sad: { bg1: [0.0, 0.05, 0.2, 1.0], bg2: [0.1, 0.1, 0.4, 1.0], line: [0.2, 0.3, 0.8, 1.0] },
-      angry: { bg1: [0.3, 0.0, 0.0, 1.0], bg2: [0.5, 0.1, 0.0, 1.0], line: [1.0, 0.1, 0.1, 1.0] },
-      thinking: { bg1: [0.1, 0.2, 0.3, 1.0], bg2: [0.1, 0.4, 0.5, 1.0], line: [0.2, 0.8, 0.9, 1.0] },
-    };
-
-    const currentColorState = {
-      bg1: [...MOODS.calm.bg1],
-      bg2: [...MOODS.calm.bg2],
-      line: [...MOODS.calm.line],
-    };
-
+    let currentAmplitude = 0.0;
     let startTime = Date.now();
     let animationFrameId: number;
     let lastTime = Date.now();
+    let mouseX = 0.5;
+    let mouseY = 0.5;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      mouseX = e.clientX / window.innerWidth;
+      mouseY = 1.0 - (e.clientY / window.innerHeight);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
     
     const render = () => {
       const now = Date.now();
@@ -273,55 +306,37 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
       lastTime = now;
       const currentTime = (now - startTime) / 1000;
 
-      // Lerp uniforms towards target state
-      const target = PRESETS[stateRef.current] || PRESETS.idle;
-      const lerpSpeed = Math.min(3.0 * dt, 1.0);
-      
-      currentUniforms.speed += (target.speed - currentUniforms.speed) * lerpSpeed;
-      currentUniforms.spread += (target.spread - currentUniforms.spread) * lerpSpeed;
+      // Map state to float uniform
+      const targetState = STATE_MAP[stateRef.current] ?? 0.0;
 
-      // Voice pulse logic & Pseudo-Random Voice Envelope
-      let pulseMultiplier = 1.0;
-      let targetAmplitude = 1.0;
+      // Voice pulse logic
+      let targetAmplitude = 0.0;
       
       if (stateRef.current === "speaking") {
-         pulseMultiplier = 1.0 + Math.abs(Math.sin(currentTime * 5.0)) * 0.2; // slowed and softened
-         
-         // Simulated lip-sync volume (slower, smoother overlapping sines)
          const v1 = Math.sin(currentTime * 4.0);
          const v2 = Math.sin(currentTime * 7.5);
          const v3 = Math.sin(currentTime * 2.5);
-         // Clamp below 0 to create natural "pauses"
          let vol = (v1 * 0.5 + v2 * 0.3 + v3 * 0.2);
-         targetAmplitude = 1.0 + Math.max(0, vol * 2.5); // Reduced max amplitude spike
+         targetAmplitude = Math.max(0, vol * 1.5);
       }
       
-      // Lerp amplitude a bit slower for smoother movement
-      currentUniforms.amplitude += (targetAmplitude - currentUniforms.amplitude) * Math.min(6.0 * dt, 1.0);
+      currentAmplitude += (targetAmplitude - currentAmplitude) * Math.min(6.0 * dt, 1.0);
 
-      // Lerp Colors based on mood
-      const targetMood = MOODS[moodRef.current] || MOODS.calm;
-      const colorLerp = Math.min(1.5 * dt, 1.0); // slower color transition
-      for(let i = 0; i < 4; i++) {
-        currentColorState.bg1[i] += (targetMood.bg1[i] - currentColorState.bg1[i]) * colorLerp;
-        currentColorState.bg2[i] += (targetMood.bg2[i] - currentColorState.bg2[i]) * colorLerp;
-        currentColorState.line[i] += (targetMood.line[i] - currentColorState.line[i]) * colorLerp;
-      }
-
-      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+      gl.clearColor(0.0, 0.0, 0.0, 0.0); // Transparent clear
       gl.clear(gl.COLOR_BUFFER_BIT);
 
       gl.useProgram(programInfo.program);
 
       gl.uniform2f(programInfo.uniformLocations.resolution, canvas.width, canvas.height);
-      gl.uniform1f(programInfo.uniformLocations.time, currentTime * currentUniforms.speed * pulseMultiplier);
-      gl.uniform1f(programInfo.uniformLocations.spread, currentUniforms.spread);
-      gl.uniform1f(programInfo.uniformLocations.amplitude, currentUniforms.amplitude);
-      
-      gl.uniform4f(programInfo.uniformLocations.bgColor1, currentColorState.bg1[0], currentColorState.bg1[1], currentColorState.bg1[2], currentColorState.bg1[3]);
-      gl.uniform4f(programInfo.uniformLocations.bgColor2, currentColorState.bg2[0], currentColorState.bg2[1], currentColorState.bg2[2], currentColorState.bg2[3]);
-      gl.uniform4f(programInfo.uniformLocations.lineColor, currentColorState.line[0], currentColorState.line[1], currentColorState.line[2], currentColorState.line[3]);
+      gl.uniform1f(programInfo.uniformLocations.time, currentTime);
+      gl.uniform1f(programInfo.uniformLocations.state, targetState);
+      gl.uniform1f(programInfo.uniformLocations.amplitude, currentAmplitude);
+      // Face tracking or mouse fallback
+      let currentMouseX = face_x !== undefined ? face_x : mouseX;
+      let currentMouseY = face_y !== undefined ? 1.0 - face_y : mouseY;
 
+      gl.uniform2f(programInfo.uniformLocations.mouse, currentMouseX, currentMouseY);
+      
       gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
       gl.vertexAttribPointer(
         programInfo.attribLocations.vertexPosition,
@@ -341,12 +356,13 @@ const ShaderBackground = ({ state, mood = 'calm' }: ShaderBackgroundProps) => {
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
+      window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(animationFrameId);
     };
-  }, []); // Empty dependency array ensures WebGL initializes only once!
+  }, []);
 
   return (
-    <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
+    <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none" />
   );
 };
 

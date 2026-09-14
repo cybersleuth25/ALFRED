@@ -249,7 +249,7 @@ focusToggle.addEventListener('change', function(e) {
 
     appendMessage(
         isFocused
-            ? 'Focus Mode ENABLED. Only "Begin Protocol Omega" will wake me.'
+            ? 'Focus Mode ENABLED. Only "Focus Mode" will wake me.'
             : 'Focus Mode DISABLED. Standard wake word active.',
         'System'
     );
