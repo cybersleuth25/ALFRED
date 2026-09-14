@@ -4,6 +4,7 @@ from tools import osint_tools
 from tools import browser_tools
 from tools import desktop_tools
 from tools import swarm_engine
+from tools import vision_tools
 import scholar_engine
 from datetime import datetime
 import requests
@@ -14,6 +15,7 @@ import webbrowser
 import urllib.parse
 import re as _re
 import json as _json
+from tools import skill_loader
 
 def set_dynamic_reminder(minutes: int, topic: str) -> str:
     """
@@ -88,6 +90,37 @@ def forget_fact(fact_id: int) -> str:
     memory_engine.delete_user_fact(fact_id)
     return f"Fact ID {fact_id} has been forgotten."
 
+def clear_all_memories() -> str:
+    """
+    Nuclear memory wipe: clears ALL facts, semantic memories, conversation history,
+    FAISS vector index, in-memory caches, and TTS audio cache.
+    Use when the user says 'forget everything', 'clear all memories', 'wipe memory', etc.
+    """
+    try:
+        # 1. Wipe all DB tables + rebuild FAISS
+        memory_engine.clear_everything()
+        
+        # 2. Clear in-memory caches in llm_engine
+        try:
+            import llm_engine
+            llm_engine.clear_memory_caches()
+        except Exception:
+            pass
+        
+        # 3. Clear TTS audio cache (old responses cached on disk)
+        try:
+            import shutil
+            cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "audio_cache")
+            if os.path.exists(cache_dir):
+                shutil.rmtree(cache_dir)
+                os.makedirs(cache_dir, exist_ok=True)
+        except Exception:
+            pass
+        
+        return "All memories have been completely erased, sir. Facts, conversations, semantic memories, and audio cache — all wiped clean. I am a blank slate."
+    except Exception as e:
+        return f"Memory wipe partially failed: {str(e)}"
+
 def journal_entry(content: str) -> str:
     """
     Appends a new entry to the user's journal file with a timestamp.
@@ -131,7 +164,10 @@ def check_weather(city: str = None) -> str:
         url = f"https://wttr.in/{city}?format=%l:+%C,+%t,+feels+like+%f,+humidity+%h,+wind+%w"
         resp = requests.get(url, timeout=5, headers={"User-Agent": "curl"})
         resp.raise_for_status()
-        return resp.text.strip()
+        text = resp.text.strip()
+        for arrow in ["→", "↗", "↘", "↑", "↓", "←", "↔"]:
+            text = text.replace(arrow, "->")
+        return text
     except Exception as e:
         return f"Failed to fetch weather: {e}"
 
@@ -171,14 +207,14 @@ def launch_application(app_name: str) -> str:
             _PROCESS_NAMES = {'chrome': 'chrome.exe', 'google chrome': 'chrome.exe', 'edge': 'msedge.exe', 'msedge': 'msedge.exe', 'brave': 'brave.exe'}
             proc_name = _PROCESS_NAMES.get(app_lower)
             if proc_name:
-                subprocess.run(f"taskkill /F /IM {proc_name}", shell=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                subprocess.run(['taskkill', '/F', '/IM', proc_name], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 import time as _time; _time.sleep(2)
             for target in targets:
-                subprocess.Popen(f"start {target} --remote-debugging-port={port}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                os.startfile(target, arguments=f'--remote-debugging-port={port}')
             return f"Launch signal sent for {app_name} (with tab control enabled on port {port})."
         
         for target in targets:
-            subprocess.Popen(f"start {target}", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            os.startfile(target)
             
         return f"Launch signal sent for {app_name}."
     except Exception as e:
@@ -213,9 +249,14 @@ def play_music(song_query: str) -> str:
             import urllib.request
             req = urllib.request.Request("https://www.youtube.com/results?" + query_string, headers={'User-Agent': 'Mozilla/5.0'})
             html_content = urllib.request.urlopen(req)
-            search_results = re.findall(r'watch\?v=(\S{11})', html_content.read().decode('utf-8', errors='ignore'))
+            html_str = html_content.read().decode('utf-8', errors='ignore')
+            # Look for videoId in the JSON payload rather than watch?v= which catches random recommendations
+            search_results = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html_str)
+            
             if search_results:
-                video_url = "https://www.youtube.com/watch?v=" + search_results[0]
+                # Filter out channel IDs and duplicates to ensure we get the first actual search result
+                unique_results = list(dict.fromkeys(search_results))
+                video_url = "https://www.youtube.com/watch?v=" + unique_results[0]
                 webbrowser.open(video_url)
                 return f"Now playing '{q_clean}' on YouTube."
         except Exception:
@@ -271,7 +312,7 @@ def play_music(song_query: str) -> str:
             artist_name = track["artists"][0]["name"] if track["artists"] else "Unknown"
             
             # Step 3: Open the track directly — this auto-plays in Spotify!
-            subprocess.Popen(f'start {track_uri}', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            os.startfile(track_uri)
             return f"Now playing: {track_name} by {artist_name} on Spotify."
         else:
             # Fallback to YouTube if Spotify has no tracks
@@ -280,6 +321,26 @@ def play_music(song_query: str) -> str:
     except Exception as e:
         print(f"[Error] Spotify search failed: {e}. Falling back to YouTube.")
         return _play_on_youtube(song_query)
+
+def play_music_by_mood() -> str:
+    """
+    Retrieves the user's current facial emotion from shared state and plays matching music.
+    """
+    import shared
+    mood = shared.dominant_emotion.lower()
+    
+    mood_to_query = {
+        'happy': 'happy upbeat playlist',
+        'sad': 'sad melancholic songs',
+        'angry': 'heavy metal angry music',
+        'fear': 'calm relaxing ambient music',
+        'surprise': 'exciting pop music',
+        'disgust': 'chill lofi hip hop',
+        'neutral': 'lofi beats'
+    }
+    
+    query = mood_to_query.get(mood, 'lofi beats')
+    return play_music(query)
 
 
 # ─────────────────────────────────────────────
@@ -593,6 +654,28 @@ def learn_new_skill(skill_description: str) -> str:
             
         code = code.strip()
         
+        # Validate AST and imports to prevent dangerous code execution
+        import ast
+        try:
+            tree = ast.parse(code)
+            blocklisted = {'os', 'subprocess', 'shutil', 'pty', 'socket', 'ctypes', 'sys', 'builtins', 'importlib'}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        name = alias.name.split('.')[0]
+                        if name in blocklisted:
+                            return f"Security check failed: import of module '{name}' is not allowed in dynamic skills."
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        name = node.module.split('.')[0]
+                        if name in blocklisted:
+                            return f"Security check failed: import from module '{name}' is not allowed in dynamic skills."
+                elif isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name) and node.func.id in {'eval', 'exec', '__import__'}:
+                        return f"Security check failed: use of built-in function '{node.func.id}' is not allowed in dynamic skills."
+        except SyntaxError as se:
+            return f"Syntax validation failed for generated code: {se}"
+        
         # Parse the function name
         match = re.search(r"def\s+([a-zA-Z_]\w*)\s*\(", code)
         if not match:
@@ -656,6 +739,7 @@ TOOL_REGISTRY = {
     # Phase 1b: Persistent User Facts
     "remember_fact": remember_fact,
     "forget_fact": forget_fact,
+    "clear_all_memories": clear_all_memories,
     
     # Phase 3: System File Controls
     "create_file": system_tools.create_file,
@@ -678,6 +762,7 @@ TOOL_REGISTRY = {
     
     # Phase 7: Media & Communication
     "play_music": play_music,
+    "play_music_by_mood": play_music_by_mood,
     "send_whatsapp": send_whatsapp,
     
     # Phase 8: OSINT & Intelligence
@@ -733,6 +818,25 @@ TOOL_REGISTRY = {
     "keyboard_press": desktop_tools.keyboard_press,
     "keyboard_hotkey": desktop_tools.keyboard_hotkey,
     "analyze_screen": desktop_tools.analyze_screen,
+    "read_screen_text": desktop_tools.read_screen_text,
+
+    # Phase 16: Open-Vocabulary Visual Grounding (YOLO-World)
+    "locate_object_in_camera": vision_tools.locate_object_in_camera,
+    "locate_object_on_screen": vision_tools.locate_object_on_screen,
+
+    # Phase 17: OSINT Geo-Intelligence
+    "get_geo_news": osint_tools.get_geo_news,
+    
+    # Phase 18: Instagram Integration
+    "fetch_instagram_posts": osint_tools.fetch_instagram_posts,
+
+    # Phase 19: Workflow Macros & Routines Engine
+    "run_routine": lambda routine_name: __import__("routine_engine").execute_routine(routine_name),
+    "create_routine": lambda prompt: str(__import__("routine_engine").create_routine_from_prompt(prompt)),
+
+    # Phase 20: Second Brain / Knowledge Graph
+    "query_knowledge_graph": lambda entity_name: str(__import__("knowledge_graph").query_subgraph(entity_name)),
+    "extract_knowledge_from_text": lambda text: str(__import__("knowledge_graph").extract_and_link_from_text(text)),
 }
 
 # --- Dynamic Import of Custom Skills on Startup ---
@@ -747,6 +851,21 @@ try:
 except Exception as e:
     print(f"[Warning] Failed to load sandbox skills on startup: {e}")
 
+# --- Register Community Skills (agentskills.io) ---
+def install_community_skill(source_path: str) -> str:
+    """
+    Installs a community skill from a local path.
+    The path must contain a manifest.json and main.py.
+    """
+    return skill_loader.install_skill(source_path)
+
+TOOL_REGISTRY["install_community_skill"] = install_community_skill
+
+try:
+    skill_loader.register_skills_to_registry(TOOL_REGISTRY)
+except Exception as e:
+    print(f"[Warning] Failed to register community skills: {e}")
+
 def execute_tool(tool_name: str, kwargs: dict) -> str:
     """
     Dynamically executes a tool based on the string name from the LLM.
@@ -760,3 +879,9 @@ def execute_tool(tool_name: str, kwargs: dict) -> str:
         return func(**kwargs)
     except Exception as e:
         return f"Error executing '{tool_name}': {e}"
+
+
+def get_all_tool_names() -> list:
+    """Returns a sorted list of all registered tool names. Used by the task orchestrator."""
+    return sorted(TOOL_REGISTRY.keys())
+

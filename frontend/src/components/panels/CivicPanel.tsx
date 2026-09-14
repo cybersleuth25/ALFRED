@@ -46,18 +46,17 @@ export default function CivicPanel() {
   };
 
   return (
-    <div className="glass-panel accent-emerald h-full flex flex-col overflow-hidden relative group">
-      <div className="scanline-effect opacity-50" />
+    <div className="card h-full flex flex-col overflow-hidden relative group">
       
       {/* Header */}
       <div className="flex items-center justify-between mb-4 relative z-10">
         <div className="flex items-center gap-2.5">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-emerald-400/60">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-emerald-400/60 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]">
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />
           </svg>
-          <span className="text-[11px] tracking-[0.15em] text-white/50 font-light">CIVIC HEALTH</span>
+          <span className="text-[11px] tracking-[0.25em] text-emerald-500/80 font-semibold">CIVIC HEALTH</span>
         </div>
         <span className="text-[9px] text-white/15 font-mono tabular-nums">{data?.updated || '--:--'}</span>
       </div>
@@ -71,7 +70,7 @@ export default function CivicPanel() {
           
           {/* Circular Score Display */}
           <div className="relative w-32 h-32 flex items-center justify-center mb-6">
-            <svg className="absolute inset-0 w-full h-full -rotate-90">
+            <svg className="absolute inset-0 w-full h-full -rotate-90 drop-shadow-[0_0_8px_rgba(255,255,255,0.2)]">
               <circle cx="64" cy="64" r="58" className="stroke-white/5 fill-none" strokeWidth="4" />
               <circle 
                 cx="64" cy="64" r="58" 
@@ -80,19 +79,20 @@ export default function CivicPanel() {
                 strokeDasharray="364"
                 strokeDashoffset={364 - (364 * (data?.score || 0)) / 100}
                 strokeLinecap="round"
+                style={{ filter: 'drop-shadow(0 0 6px currentColor)' }}
               />
             </svg>
-            <div className="flex flex-col items-center justify-center">
-              <span className={`text-4xl font-light tracking-tight ${getGradeColor(data?.grade || 'N/A')}`}>
+            <div className="flex flex-col items-center justify-center mt-2">
+              <span className={`text-[54px] font-extralight tracking-tight leading-none text-shadow-glow ${getGradeColor(data?.grade || 'N/A')}`}>
                 {data?.grade || '-'}
               </span>
-              <span className="text-[10px] text-white/30 font-mono mt-1">SCORE: {data?.score || 0}</span>
+              <span className="text-[10px] text-white/50 font-mono mt-1 tracking-[0.2em]">SCORE: {data?.score || 0}</span>
             </div>
           </div>
 
           {/* AI Summary */}
           <div className="px-4 text-center">
-            <p className="text-[11px] text-white/60 font-light leading-relaxed">
+            <p className="text-[11px] text-cyan-50/70 font-light leading-relaxed tracking-wide">
               {data?.summary || 'No civic data available at the moment.'}
             </p>
           </div>

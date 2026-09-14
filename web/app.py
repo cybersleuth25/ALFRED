@@ -14,7 +14,6 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
@@ -54,7 +53,12 @@ app = FastAPI(title="Alfred AI Protocol", lifespan=lifespan)
 # Add CORS Middleware just in case
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -65,6 +69,10 @@ dist_dir = os.path.abspath(os.path.join(web_dir, '..', 'frontend', 'dist'))
 if os.path.exists(dist_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(dist_dir, 'assets')), name="assets")
 
+incident_dir = os.path.abspath(os.path.join(web_dir, '..', 'assets', 'incidents'))
+os.makedirs(incident_dir, exist_ok=True)
+app.mount("/incident_images", StaticFiles(directory=incident_dir), name="incident_images")
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     index_path = os.path.join(dist_dir, 'index.html')
@@ -73,24 +81,38 @@ async def index(request: Request):
             return HTMLResponse(f.read())
     return HTMLResponse("<body><h1>Alfred</h1><p>UI Native Build Mode - Please run 'npm run build' in frontend folder</p></body>")
 
+ui_active_connections = 0
+
 @app.get('/stream')
 async def stream(request: Request):
     """EventSource endpoint for standard Alfred events."""
+    global ui_active_connections
+    ui_active_connections += 1
+    
+    async def delayed_shutdown():
+        await asyncio.sleep(2.0)
+        if ui_active_connections <= 0:
+            print("\n[System] UI disconnected (Window closed). Shutting down Alfred backend...")
+            os._exit(0)
+
     async def event_generator():
-        while True:
-            # We must use asyncio.to_thread because queue.get() is blocking
-            if await request.is_disconnected():
-                break
-            try:
-                # To prevent blocking the main event loop, we use wait_for or similar, but 
-                # since shared.event_queue.get() is a blocking queue call, we wrap it:
-                event = await asyncio.to_thread(shared.event_queue.get)
-                yield json.dumps(event)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"Stream error: {e}")
-                await asyncio.sleep(1)
+        global ui_active_connections
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.to_thread(shared.event_queue.get)
+                    yield json.dumps(event)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    print(f"Stream error: {e}")
+                    await asyncio.sleep(1)
+        finally:
+            ui_active_connections -= 1
+            if ui_active_connections <= 0:
+                asyncio.create_task(delayed_shutdown())
 
     return EventSourceResponse(event_generator())
 
@@ -103,12 +125,12 @@ async def set_focus(request: Request):
 
 
 # ==========================================
-# PROTOCOL OMEGA (STUDY MENTOR) ENDPOINTS
+# FOCUS MODE (STUDY MENTOR) ENDPOINTS
 # ==========================================
 
-@app.get('/api/omega/status')
-async def api_omega_status():
-    """Returns the current real-time state of Protocol Omega."""
+@app.get('/api/focus/status')
+async def api_focus_status():
+    """Returns the current real-time state of Focus Mode."""
     try:
         import shared
         return JSONResponse({
@@ -126,8 +148,8 @@ async def api_omega_status():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.get('/api/omega/history')
-async def api_omega_history():
+@app.get('/api/focus/history')
+async def api_focus_history():
     """Returns the last 10 study sessions."""
     try:
         import memory_engine
@@ -136,8 +158,8 @@ async def api_omega_history():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.get('/api/omega/stats')
-async def api_omega_stats():
+@app.get('/api/focus/stats')
+async def api_focus_stats():
     """Returns aggregate study stats."""
     try:
         import memory_engine
@@ -146,9 +168,9 @@ async def api_omega_stats():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post('/api/omega/toggle')
-async def api_omega_toggle(request: Request):
-    """Activates or deactivates Protocol Omega from the frontend."""
+@app.post('/api/focus/toggle')
+async def api_focus_toggle(request: Request):
+    """Activates or deactivates Focus Mode from the frontend."""
     try:
         import study_mentor
         import shared
@@ -176,8 +198,8 @@ async def api_omega_toggle(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post('/api/omega/break')
-async def api_omega_break():
+@app.post('/api/focus/break')
+async def api_focus_break():
     """Manually triggers a short break."""
     try:
         import study_mentor
@@ -192,7 +214,286 @@ async def api_omega_break():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get('/api/camera/feed')
+async def camera_feed():
+    """MJPEG stream of the security camera for the frontend."""
+    import cv2
+    import security_engine
+    from starlette.responses import StreamingResponse
+    
+    async def generate_frames():
+        while True:
+            frame = security_engine.get_latest_frame()
+            if frame is not None:
+                # Resize for bandwidth efficiency
+                small = cv2.resize(frame, (320, 240))
+                _, buffer = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, 55])
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            await asyncio.sleep(0.5)  # ~2 FPS
+    
+    return StreamingResponse(generate_frames(), media_type='multipart/x-mixed-replace; boundary=frame')
+
+@app.get('/api/camera/status')
+async def camera_status():
+    """Returns whether the camera is available."""
+    import security_engine
+    frame = security_engine.get_latest_frame()
+    return JSONResponse({"available": frame is not None})
+
+@app.post('/api/incidents/clear')
+async def clear_incidents():
+    import shared
+    shared.unseen_incidents = []
+    shared.push_sentry_state()
+    return JSONResponse({"status": "cleared"})
+
+@app.get('/api/focus/heatmap')
+async def api_focus_heatmap():
+    """Returns hourly focus heatmap data for today."""
+    try:
+        import memory_engine
+        data = memory_engine.get_hourly_focus_data()
+        return JSONResponse({"heatmap": data})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/focus/lockdown')
+async def api_focus_lockdown(request: Request):
+    """Toggle lockdown mode from the frontend."""
+    try:
+        import study_mentor
+        import shared
+        if shared.omega_lockdown:
+            result = study_mentor.disengage_lockdown()
+        else:
+            result = study_mentor.engage_lockdown()
+        return JSONResponse({"lockdown": shared.omega_lockdown, "message": result})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 # ==========================================
+
+# ==========================================
+# CONTEXTUAL AWARENESS ENDPOINTS
+# ==========================================
+
+@app.get('/api/context/current')
+async def api_context_current():
+    """Returns the current contextual awareness state (activity, presence, dwell time)."""
+    try:
+        import context_engine
+        return JSONResponse(context_engine.get_current_context())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/context/timeline')
+async def api_context_timeline(minutes: int = 60):
+    """Returns the activity timeline for the last N minutes."""
+    try:
+        import context_engine
+        timeline = context_engine.get_activity_timeline(minutes)
+        return JSONResponse({"timeline": timeline, "minutes": minutes})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# WORKFLOW ROUTINES ENDPOINTS
+# ==========================================
+
+@app.get('/api/routines')
+async def api_get_routines():
+    """Returns list of all configured routines."""
+    try:
+        import memory_engine
+        return JSONResponse({"routines": memory_engine.get_all_routines()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/routines')
+async def api_save_routine(req: Request):
+    """Creates or updates a routine."""
+    try:
+        import memory_engine
+        data = await req.json()
+        name = data.get("name")
+        display_name = data.get("display_name", name.title())
+        triggers = data.get("trigger_phrases", [name])
+        description = data.get("description", "")
+        steps = data.get("steps", [])
+        
+        routine_id = memory_engine.save_routine(
+            name=name,
+            display_name=display_name,
+            trigger_phrases=triggers,
+            description=description,
+            steps=steps,
+            is_builtin=False
+        )
+        return JSONResponse({"success": True, "id": routine_id, "name": name})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/routines/execute')
+async def api_execute_routine(req: Request):
+    """Executes a routine by name or ID."""
+    try:
+        import routine_engine
+        data = await req.json()
+        name_or_id = data.get("name") or data.get("id")
+        if not name_or_id:
+            return JSONResponse({"error": "Routine name or id is required"}, status_code=400)
+        res = routine_engine.execute_routine(name_or_id)
+        return JSONResponse({"success": True, "message": res})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.delete('/api/routines/{routine_id}')
+async def api_delete_routine(routine_id: int):
+    """Deletes a custom routine."""
+    try:
+        import memory_engine
+        deleted = memory_engine.delete_routine(routine_id)
+        return JSONResponse({"success": deleted})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/routines/generate')
+async def api_generate_routine(req: Request):
+    """Uses LLM to compile natural language into a structured routine."""
+    try:
+        import routine_engine
+        data = await req.json()
+        prompt = data.get("prompt", "")
+        if not prompt:
+            return JSONResponse({"error": "Prompt is required"}, status_code=400)
+        res = routine_engine.create_routine_from_prompt(prompt)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# MOOD & EMOTIONAL INTELLIGENCE ENDPOINTS
+# ==========================================
+
+@app.get('/api/mood/current')
+async def api_mood_current():
+    """Returns current live emotion and recent dominant mood."""
+    try:
+        import mood_engine
+        return JSONResponse(mood_engine.get_current_mood())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/mood/timeline')
+async def api_mood_timeline(hours: int = 24):
+    """Returns historical mood snapshots for charting."""
+    try:
+        import mood_engine
+        timeline = mood_engine.get_mood_timeline(hours=hours)
+        return JSONResponse({"timeline": timeline, "hours": hours})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# KNOWLEDGE GRAPH (SECOND BRAIN) ENDPOINTS
+# ==========================================
+
+@app.get('/api/knowledge/graph')
+async def api_knowledge_graph():
+    """Returns nodes and edges formatted for D3.js force graph visualization."""
+    try:
+        import knowledge_graph
+        return JSONResponse(knowledge_graph.get_graph_data())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/knowledge/node/{name}')
+async def api_knowledge_node(name: str, depth: int = 2):
+    """Returns multi-hop subgraph around a specific entity."""
+    try:
+        import knowledge_graph
+        subgraph = knowledge_graph.query_subgraph(name, depth=depth)
+        return JSONResponse(subgraph)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/knowledge/extract')
+async def api_knowledge_extract(req: Request):
+    """Extracts entities and relationships from text and updates the graph."""
+    try:
+        import knowledge_graph
+        data = await req.json()
+        text = data.get("text", "")
+        if not text:
+            return JSONResponse({"error": "Text is required"}, status_code=400)
+        res = knowledge_graph.extract_and_link_from_text(text)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/knowledge/query')
+async def api_knowledge_query(req: Request):
+    """Performs natural language query against the knowledge graph."""
+    try:
+        import knowledge_graph
+        data = await req.json()
+        query = data.get("query", "")
+        summary = knowledge_graph.query_knowledge_summary(query)
+        return JSONResponse({"summary": summary})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# FEATURE 5: SECURITY & DIGITAL TRIPWIRE ENDPOINTS
+# ==========================================
+
+@app.get('/api/security/incidents')
+async def api_security_incidents(limit: int = 50, unresolved_only: bool = False):
+    """Returns logged security incidents and evidence snapshot paths."""
+    try:
+        import memory_engine
+        incidents = memory_engine.get_security_incidents(limit=limit, unresolved_only=unresolved_only)
+        return JSONResponse({"incidents": incidents})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/security/incidents/resolve')
+async def api_security_resolve(req: Request):
+    """Marks a security incident as resolved."""
+    try:
+        import memory_engine
+        data = await req.json()
+        inc_id = data.get("id")
+        if not inc_id:
+            return JSONResponse({"error": "Incident id required"}, status_code=400)
+        memory_engine.resolve_security_incident(int(inc_id))
+        return JSONResponse({"success": True, "resolved_id": inc_id})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/security/kill_process')
+async def api_security_kill_process(req: Request):
+    """Kills a rogue or suspicious process by PID."""
+    try:
+        import tripwire_engine
+        data = await req.json()
+        pid = data.get("pid")
+        if not pid:
+            return JSONResponse({"error": "PID is required"}, status_code=400)
+        res = tripwire_engine.kill_process(int(pid))
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/security/status')
+async def api_security_status():
+    """Returns live operational status of Digital Tripwire."""
+    try:
+        import tripwire_engine
+        return JSONResponse(tripwire_engine.get_tripwire_status())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # ==========================================
 # SPEECH CONTROL ENDPOINTS (Pause / Resume / Status)
@@ -210,14 +511,50 @@ async def api_speech_pause():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.get('/api/speech/status')
-async def api_speech_status():
-    """Returns whether Alfred is currently speaking and/or paused."""
+@app.post('/api/speech/stop')
+async def api_speech_stop():
+    """Immediately halts Alfred's speech, clears caption, pauses the main loop, and stops the camera."""
     try:
         import voice_engine
+        import shared
+        voice_engine.stop_speaking()
+        shared.alfred_halted = True
+        shared.push_state("idle")
+        shared.push_caption("")
+        try:
+            shared.event_queue.put_nowait({"type": "halted", "value": True})
+        except Exception:
+            pass
+        return JSONResponse({"stopped": True, "halted": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/speech/resume')
+async def api_speech_resume():
+    """Clears the halted flag so Alfred's main loop resumes listening, and restarts the camera."""
+    try:
+        import shared
+        shared.alfred_halted = False
+        shared.push_state("listening")
+        try:
+            shared.event_queue.put_nowait({"type": "halted", "value": False})
+        except Exception:
+            pass
+        return JSONResponse({"halted": False})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get('/api/speech/status')
+async def api_speech_status():
+    """Returns whether Alfred is currently speaking, paused, and/or halted."""
+    try:
+        import voice_engine
+        import shared
         return JSONResponse({
             "speaking": voice_engine.is_speaking(),
-            "paused": voice_engine.is_paused()
+            "paused": voice_engine.is_paused(),
+            "halted": getattr(shared, 'alfred_halted', False)
         })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -500,9 +837,29 @@ async def broadcast_loop():
 
 # The broadcast_loop is now started by the FastAPI lifespan manager above.
 
+def _kill_stale_port(port):
+    """Kill any leftover process holding our port (prevents [Errno 10048] on restart)."""
+    try:
+        for conn in psutil.net_connections(kind='inet'):
+            if conn.laddr.port == port and conn.status == 'LISTEN':
+                try:
+                    proc = psutil.Process(conn.pid)
+                    # Don't kill ourselves
+                    if proc.pid == os.getpid():
+                        continue
+                    print(f"[System] Killing stale process on port {port}: {proc.name()} (PID {proc.pid})")
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                    pass
+    except Exception as e:
+        print(f"[System] Port cleanup warning: {e}")
+
 def run_uvicorn():
     import uvicorn
+    _kill_stale_port(8000)
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+
 
 if __name__ == '__main__':
     # Start Alfred's logic loop in a background daemon thread
@@ -533,7 +890,7 @@ if __name__ == '__main__':
     import subprocess, shutil
     
     url = 'http://127.0.0.1:8000'
-    launched = False
+    browser_process = None
     
     # Try Microsoft Edge first (pre-installed on Windows), then Chrome
     browser_paths = [
@@ -545,11 +902,10 @@ if __name__ == '__main__':
     for browser in browser_paths:
         if browser and os.path.exists(browser):
             print(f"\n[System] Launching Alfred Protocol as Desktop App via {os.path.basename(browser)}...")
-            subprocess.Popen([browser, f'--app={url}', '--window-size=1400,850'])
-            launched = True
+            browser_process = subprocess.Popen([browser, f'--app={url}', '--window-size=1400,850'])
             break
     
-    if not launched:
+    if not browser_process:
         import webbrowser
         print(f"\n[System] Opening Alfred Protocol in default browser...")
         webbrowser.open(url)
@@ -560,3 +916,4 @@ if __name__ == '__main__':
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n[System] Alfred shutting down. Goodbye, sir.")
+        os._exit(0)

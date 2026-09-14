@@ -1,0 +1,65 @@
+:root {
+  /* Palette — neutrals */
+  --color-black: #000000;
+  --color-grey-900: #0a0a0a;
+  --color-grey-800: #141414;
+  --color-grey-700: #2a2a2a;
+  --color-grey-600: #525252;
+  --color-grey-500: #6f6f6f;
+  --color-grey-400: #8a8a8a;
+  --color-grey-300: #b8b8b8;
+  --color-grey-200: #d9d9d9;
+  --color-grey-100: #ededed;
+  --color-grey-050: #f4f4f4;
+  --color-white: #ffffff;
+
+  /* Single accent — SOOT yellow */
+  --color-accent: #ECFF0F;
+  --color-accent-glow: rgba(236, 255, 15, 0.6);
+
+  /* System status (utility only) */
+  --color-system-blue:   #2f80ed;
+  --color-system-green:  #27ae60;
+  --color-system-orange: #f1913e;
+  --color-system-red:    #eb5757;
+
+  /* Semantic tokens — LIGHT theme */
+  --surface-base: var(--color-grey-100);          /* page background */
+  --surface-elevated: var(--color-white);          /* cards / panels */
+  --surface-glass: rgba(255, 255, 255, 0.65);      /* frost panels */
+  --surface-overlay: rgba(20, 20, 20, 0.55);       /* lightbox backdrop */
+  --text-primary: var(--color-grey-700);
+  --text-secondary: var(--color-grey-600);
+  --text-tertiary: var(--color-grey-500);
+  --text-on-accent: var(--color-grey-700);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-medium: rgba(0, 0, 0, 0.16);
+
+  /* Typography */
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --font-size-hero-large: 64px;
+  --font-size-hero-medium: 48px;
+  --font-size-hero-small: 24px;
+  --font-size-xxl: 1.5rem;
+  --font-size-xl: 1.25rem;
+  --font-size-lg: 1rem;
+  --font-size-md: 0.75rem;
+  --font-size-sm: 0.625rem;
+
+  /* Motion */
+  --ease-translate: cubic-bezier(0.8, 0, 0.2, 1);
+  --duration-color: 0.2s;
+
+  /* Frost glass */
+  --frost-blur-light: 8px;
+  --frost-blur: 14px;
+  --frost-blur-heavy: 22px;
+  --frost-tint: var(--surface-glass);
+  --frost-contrast: 1.1;
+  --frost-brightness: 1.05;
+
+  /* Radii */
+  --radius-button: 6px;
+  --radius-panel: 12px;
+}

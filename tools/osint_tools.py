@@ -96,10 +96,10 @@ def get_news(topic: str = "world") -> str:
 # ─────────────────────────────────────────────
 # TOOL 3: Earthquake Monitor (USGS — free API)
 # ─────────────────────────────────────────────
-def get_earthquakes() -> str:
+def get_earthquakes(only_india: bool = True) -> str:
     """
     Fetches the most recent significant earthquakes from the USGS live feed.
-    Returns the top 5 earthquakes from the last 7 days.
+    If only_india is True (default), filters strictly for earthquakes in or near India.
     """
     try:
         url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson"
@@ -111,8 +111,40 @@ def get_earthquakes() -> str:
         if not features:
             return "No significant earthquakes detected in the last 7 days."
         
+        indian_regions = [
+            "india", "andaman", "nicobar", "kashmir", "ladakh", "assam", 
+            "gujarat", "delhi", "himalaya", "uttarakhand", "himachal", 
+            "bay of bengal", "arabian sea", "sikkim", "arunachal", "manipur",
+            "mizoram", "nagaland", "tripura", "meghalaya", "hindu kush"
+        ]
+        
+        filtered = []
+        for eq in features:
+            props = eq.get("properties", {})
+            place = props.get("place", "Unknown location").lower()
+            coords = eq.get("geometry", {}).get("coordinates", [])
+            
+            is_india = False
+            # Keyword match
+            if any(r in place for r in indian_regions):
+                is_india = True
+            # Geolocation bounding box for India (Lat: 6.0°N to 37.5°N, Lon: 68.0°E to 97.5°E)
+            elif len(coords) >= 2:
+                lon, lat = coords[0], coords[1]
+                if 6.0 <= lat <= 37.5 and 68.0 <= lon <= 97.5:
+                    is_india = True
+            
+            if only_india:
+                if is_india:
+                    filtered.append(eq)
+            else:
+                filtered.append(eq)
+        
+        if only_india and not filtered:
+            return "No significant seismic activity detected in or near India this week."
+        
         output = []
-        for eq in features[:5]:
+        for eq in filtered[:5]:
             props = eq.get("properties", {})
             mag = props.get("mag", "?")
             place = props.get("place", "Unknown location")
@@ -120,11 +152,10 @@ def get_earthquakes() -> str:
             
             # Convert epoch ms to human readable
             eq_time = datetime.fromtimestamp(time_ms / 1000).strftime("%b %d, %I:%M %p")
-            
             output.append(f"• Magnitude {mag} — {place} ({eq_time})")
         
-        total = len(features)
-        header = f"Seismic Activity Report ({total} quakes M4.5+ this week):\n"
+        target_name = "India" if only_india else "Global"
+        header = f"Seismic Activity Report ({target_name}):\n"
         return header + "\n".join(output)
     except Exception as e:
         return f"Failed to fetch earthquake data: {e}"
@@ -136,7 +167,7 @@ def get_earthquakes() -> str:
 def daily_briefing() -> str:
     """
     Generates a comprehensive daily intelligence briefing combining:
-    weather, top news, and seismic activity.
+    weather and top news, plus seismic alerts ONLY if detected in India.
     """
     from tools.core_tools import check_weather
     
@@ -144,7 +175,6 @@ def daily_briefing() -> str:
     
     # Time context
     now = datetime.now()
-    greeting_time = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
     sections.append(f"Intelligence Briefing — {now.strftime('%A, %B %d, %Y at %I:%M %p')}")
     sections.append("")
     
@@ -162,14 +192,15 @@ def daily_briefing() -> str:
         sections.append(news)
     except:
         sections.append("NEWS: Unable to retrieve.")
-    sections.append("")
     
-    # Earthquakes
+    # Earthquakes — ONLY include if there is seismic activity in India!
     try:
-        quakes = get_earthquakes()
-        sections.append(quakes)
+        quakes = get_earthquakes(only_india=True)
+        if "No significant seismic activity" not in quakes and "Failed" not in quakes:
+            sections.append("")
+            sections.append(quakes)
     except:
-        sections.append("SEISMIC: Unable to retrieve.")
+        pass
     
     return "\n".join(sections)
 
@@ -310,3 +341,241 @@ def stealth_fetch_url(url: str) -> str:
         return f"Timeout while trying to stealth-fetch {url}. The site may have extreme bot-protection or is offline."
     except Exception as e:
         return f"Failed to stealth-fetch {url}: {e}"
+
+
+# ─────────────────────────────────────────────
+# TOOL 8: Geo-Intelligence News (OSINT → Globe)
+# ─────────────────────────────────────────────
+
+# Common location patterns for extraction
+_KNOWN_COUNTRIES = {
+    "india", "china", "russia", "ukraine", "usa", "us", "uk", "israel", "iran",
+    "pakistan", "japan", "france", "germany", "brazil", "australia", "canada",
+    "turkey", "egypt", "saudi arabia", "south korea", "north korea", "mexico",
+    "indonesia", "nigeria", "south africa", "italy", "spain", "argentina",
+    "colombia", "bangladesh", "thailand", "vietnam", "philippines", "taiwan",
+    "myanmar", "afghanistan", "iraq", "syria", "yemen", "libya", "sudan",
+    "ethiopia", "kenya", "morocco", "algeria", "poland", "romania", "netherlands",
+    "greece", "portugal", "sweden", "norway", "finland", "denmark", "switzerland",
+    "austria", "belgium", "czech republic", "hungary", "ireland", "scotland",
+    "wales", "new zealand", "singapore", "malaysia", "sri lanka", "nepal",
+}
+
+def _extract_locations(text: str) -> list:
+    """Extract location names from text using heuristic patterns."""
+    import re
+    locations = []
+
+    # Check for known country names
+    text_lower = text.lower()
+    for country in _KNOWN_COUNTRIES:
+        if country in text_lower:
+            locations.append(country.title())
+
+    # Extract capitalized multi-word place names (heuristic: 2-3 consecutive capitalized words)
+    # This catches city names like "New Delhi", "Los Angeles", "Tel Aviv"
+    place_pattern = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b', text)
+    # Filter out common non-location capitalized words
+    _stop_words = {
+        "The", "This", "That", "These", "Those", "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday", "Sunday", "January", "February", "March",
+        "April", "May", "June", "July", "August", "September", "October", "November",
+        "December", "According", "President", "Minister", "Prime", "Breaking",
+        "Reuters", "Associated Press", "Update", "Report", "Says", "After",
+        "Before", "During", "World", "Global", "International", "National",
+        "Government", "Security", "Council", "Defense", "Foreign", "Health",
+        "Economic", "Political", "Military", "Official", "Statement",
+    }
+    for place in place_pattern:
+        words = place.split()
+        if words[0] not in _stop_words and len(place) > 3:
+            locations.append(place)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for loc in locations:
+        loc_lower = loc.lower()
+        if loc_lower not in seen:
+            seen.add(loc_lower)
+            unique.append(loc)
+
+    return unique[:10]  # Cap at 10 locations
+
+
+def _geocode_locations(locations: list) -> list:
+    """Forward-geocode location names to lat/lng coordinates."""
+    markers = []
+
+    try:
+        from geopy.geocoders import Nominatim
+        geolocator = Nominatim(user_agent="alfred-osint-v1", timeout=5)
+    except ImportError:
+        # Fallback: use a small built-in dictionary for the most common locations
+        _FALLBACK_COORDS = {
+            "India": (20.5937, 78.9629), "China": (35.8617, 104.1954),
+            "Russia": (61.5240, 105.3188), "Ukraine": (48.3794, 31.1656),
+            "Usa": (37.0902, -95.7129), "Us": (37.0902, -95.7129),
+            "Uk": (55.3781, -3.4360), "Israel": (31.0461, 34.8516),
+            "Iran": (32.4279, 53.6880), "Pakistan": (30.3753, 69.3451),
+            "Japan": (36.2048, 138.2529), "France": (46.2276, 2.2137),
+            "Germany": (51.1657, 10.4515), "Brazil": (-14.2350, -51.9253),
+            "New Delhi": (28.6139, 77.2090), "Moscow": (55.7558, 37.6173),
+            "Beijing": (39.9042, 116.4074), "Tokyo": (35.6762, 139.6503),
+            "London": (51.5074, -0.1278), "Paris": (48.8566, 2.3522),
+            "Washington": (38.9072, -77.0369), "Kyiv": (50.4501, 30.5234),
+            "Tel Aviv": (32.0853, 34.7818), "Tehran": (35.6892, 51.3890),
+            "Cairo": (30.0444, 31.2357), "Riyadh": (24.7136, 46.6753),
+            "Seoul": (37.5665, 126.9780), "Istanbul": (41.0082, 28.9784),
+        }
+        for loc in locations:
+            if loc in _FALLBACK_COORDS:
+                lat, lng = _FALLBACK_COORDS[loc]
+                markers.append({"lat": lat, "lng": lng, "label": loc, "type": "news"})
+        return markers
+
+    import time
+    for loc in locations:
+        try:
+            result = geolocator.geocode(loc)
+            if result:
+                markers.append({
+                    "lat": result.latitude,
+                    "lng": result.longitude,
+                    "label": loc,
+                    "type": "news",
+                })
+            time.sleep(1.1)  # Nominatim rate limit: 1 req/sec
+        except Exception:
+            continue
+
+    return markers
+
+
+def get_geo_news(topic: str = "world") -> str:
+    """
+    Fetches top news headlines, extracts geographical locations,
+    geocodes them, and pushes markers to the 3D globe dashboard.
+    Returns a summary of mapped locations.
+    """
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(__file__))))
+
+    try:
+        # Step 1: Fetch news headlines
+        news_text = get_news(topic)
+        if not news_text or "Could not fetch" in news_text:
+            return f"Could not fetch news for topic '{topic}'."
+
+        # Step 2: Extract locations from headlines
+        locations = _extract_locations(news_text)
+        if not locations:
+            return f"No geographical locations detected in the current '{topic}' headlines."
+
+        # Step 3: Geocode to coordinates
+        markers = _geocode_locations(locations)
+        if not markers:
+            return f"Extracted locations ({', '.join(locations)}) but could not geocode any of them."
+
+        # Step 4: Push to globe via SSE
+        try:
+            import shared
+            shared.push_geo_intel(markers)
+            shared.push_globe(True)
+        except Exception as e:
+            print(f"[OSINT Geo] Failed to push to globe: {e}")
+
+        # Step 5: Return summary
+        loc_summary = ", ".join([f"{m['label']} ({m['lat']:.1f}°, {m['lng']:.1f}°)" for m in markers])
+        return (
+            f"Mapped {len(markers)} locations from '{topic}' news to the globe:\n"
+            f"{loc_summary}\n\n"
+            f"Headlines:\n{news_text}"
+        )
+    except Exception as e:
+        return f"Geo-intelligence scan failed: {e}"
+
+
+# ─────────────────────────────────────────────
+# TOOL 9: Instagram Scraper (RapidAPI/Apify)
+# ─────────────────────────────────────────────
+def fetch_instagram_posts(username: str, limit: int = 3) -> str:
+    """
+    Fetches the latest posts from a specific Instagram account using a RapidAPI endpoint.
+    Requires RAPIDAPI_KEY in .env.
+    """
+    import os
+    import requests
+    
+    api_key = os.getenv("RAPIDAPI_KEY")
+    if not api_key:
+        return "RAPIDAPI_KEY is not configured in the environment. Cannot access Instagram."
+        
+    username = username.strip().lower().replace('@', '')
+    
+    try:
+        # Switched to 'instagram-scraper-stable-api' as requested
+        posts_url = "https://instagram-scraper-stable-api.p.rapidapi.com/user/posts"
+        posts_query = {"username": username}
+        
+        headers = {
+            "x-rapidapi-key": api_key,
+            "x-rapidapi-host": "instagram-scraper-stable-api.p.rapidapi.com"
+        }
+        
+        response = requests.get(posts_url, headers=headers, params=posts_query, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Generalized parser since RapidAPI endpoints vary in structure
+        # Often it's data -> items, or just items, or edge_owner_to_timeline_media -> edges
+        items = data.get("data", {}).get("items", []) 
+        if not items and "items" in data:
+            items = data["items"]
+        if not items and "data" in data and isinstance(data["data"], list):
+            items = data["data"]
+            
+        if not items:
+            return f"No recent posts found for @{username} or the account is private/API response structure changed."
+            
+        output = [f"Latest Instagram posts from @{username}:\n"]
+        
+        count = 0
+        for post in items:
+            if count >= limit:
+                break
+                
+            # Handle different caption structures
+            caption = "No caption provided."
+            if "caption" in post and isinstance(post["caption"], dict):
+                caption = post["caption"].get("text", caption)
+            elif "caption_text" in post:
+                caption = post["caption_text"]
+            elif "text" in post:
+                caption = post["text"]
+            
+            # Truncate caption if it's too long
+            if len(caption) > 200:
+                caption = caption[:200] + "..."
+                
+            timestamp = post.get("taken_at") or post.get("timestamp")
+            if timestamp:
+                from datetime import datetime
+                try:
+                    time_str = datetime.fromtimestamp(int(timestamp)).strftime("%b %d, %I:%M %p")
+                except:
+                    time_str = str(timestamp)
+            else:
+                time_str = "Unknown time"
+                
+            likes = post.get("like_count", 0) or post.get("likes", 0)
+            
+            output.append(f"• [{time_str}] (Likes: {likes}): {caption}")
+            count += 1
+            
+        return "\n".join(output)
+        
+    except Exception as e:
+        return f"Failed to fetch Instagram posts for @{username}. Ensure your RAPIDAPI_KEY is valid and subscribed to 'Instagram Scraper Stable API'. Error: {e}"
+

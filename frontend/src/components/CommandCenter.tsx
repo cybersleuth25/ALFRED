@@ -1,11 +1,12 @@
+import { useState, useEffect } from 'react';
 import OsintPanel from './panels/OsintPanel';
 import WeatherPanel from './panels/WeatherPanel';
 import SystemPanel from './panels/SystemPanel';
 import TrackerPanel from './panels/TrackerPanel';
 import CivicPanel from './panels/CivicPanel';
-import OmegaPanel from './panels/OmegaPanel';
+import FocusPanel from './panels/FocusPanel';
 
-interface OmegaState {
+interface FocusState {
   active: boolean;
   phase: string;
   remaining: number;
@@ -20,48 +21,68 @@ interface OmegaState {
 
 interface CommandCenterProps {
   active: boolean;
-  omegaState: OmegaState | null;
+  focusState: FocusState | null;
+  lockdown: boolean;
 }
 
-export default function CommandCenter({ active, omegaState }: CommandCenterProps) {
+export default function CommandCenter({ active, focusState, lockdown }: CommandCenterProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (active) {
+      // Small delay to trigger CSS animation
+      requestAnimationFrame(() => setMounted(true));
+    } else {
+      setMounted(false);
+    }
+  }, [active]);
+
+  if (!active) return null;
+
+  const isFocus = focusState?.active || false;
+
   return (
-    <div className={`absolute inset-0 z-30 pointer-events-none transition-opacity duration-700 ${active ? 'opacity-100' : 'opacity-0'}`}>
-      {/* 6-Panel Grid */}
-      <div className="w-full h-full grid grid-cols-3 grid-rows-2 gap-4 p-6 pt-24">
-        {/* Top-Left: Weather */}
-        <div className={`pointer-events-auto transform transition-all duration-700 ease-out ${active ? 'translate-x-0 opacity-100' : '-translate-x-10 opacity-0'}`}
-             style={{ transitionDelay: active ? '100ms' : '0ms' }}>
-          <WeatherPanel />
-        </div>
+    <div className="command-center-overlay" data-mounted={mounted}>
+      {/* Cinematic backdrop blur */}
+      <div className="command-center-backdrop" />
 
-        {/* Top-Middle: System Vitals */}
-        <div className={`pointer-events-auto transform transition-all duration-700 ease-out ${active ? 'translate-x-0 opacity-100' : 'translate-y-10 opacity-0'}`}
-             style={{ transitionDelay: active ? '200ms' : '0ms' }}>
-          <SystemPanel />
-        </div>
-        
-        {/* Top-Right: Civic Health */}
-        <div className={`pointer-events-auto transform transition-all duration-700 ease-out ${active ? 'translate-x-0 opacity-100' : 'translate-x-10 opacity-0'}`}
-             style={{ transitionDelay: active ? '250ms' : '0ms' }}>
-          <CivicPanel />
-        </div>
+      {/* Scanline effect overlay */}
+      <div className="command-center-scanlines" />
 
-        {/* Bottom-Left: OSINT Intel */}
-        <div className={`pointer-events-auto transform transition-all duration-700 ease-out ${active ? 'translate-x-0 opacity-100' : '-translate-x-10 opacity-0'}`}
-             style={{ transitionDelay: active ? '300ms' : '0ms' }}>
-          <OsintPanel />
-        </div>
+      {/* Main grid container */}
+      <div className="command-center-grid-wrapper">
+        <div className="bento-grid">
 
-        {/* Bottom-Middle: Live Tracker */}
-        <div className={`pointer-events-auto transform transition-all duration-700 ease-out ${active ? 'translate-x-0 opacity-100' : 'translate-y-10 opacity-0'}`}
-             style={{ transitionDelay: active ? '400ms' : '0ms' }}>
-          <TrackerPanel />
-        </div>
+          {/* Weather — Spans 2 columns */}
+          <div className={`area-weather bento-cell ${isFocus ? 'focus-mode-dim' : ''}`} style={{ animationDelay: '50ms' }}>
+            <WeatherPanel />
+          </div>
 
-        {/* Bottom-Right: Protocol Omega */}
-        <div className={`pointer-events-auto transform transition-all duration-700 ease-out ${active ? 'translate-x-0 opacity-100' : 'translate-x-10 opacity-0'}`}
-             style={{ transitionDelay: active ? '500ms' : '0ms' }}>
-          <OmegaPanel omegaState={omegaState} />
+          {/* System Vitals */}
+          <div className={`area-system bento-cell ${isFocus ? 'focus-mode-dim' : ''}`} style={{ animationDelay: '120ms' }}>
+            <SystemPanel />
+          </div>
+
+          {/* Focus Mode */}
+          <div className="area-focus bento-cell" style={{ animationDelay: '180ms' }}>
+            <FocusPanel focusState={focusState} lockdown={lockdown} />
+          </div>
+
+          {/* OSINT Intel */}
+          <div className={`area-osint bento-cell ${isFocus ? 'focus-mode-dim' : ''}`} style={{ animationDelay: '200ms' }}>
+            <OsintPanel />
+          </div>
+
+          {/* Civic Health */}
+          <div className={`area-civic bento-cell ${isFocus ? 'focus-mode-dim' : ''}`} style={{ animationDelay: '260ms' }}>
+            <CivicPanel />
+          </div>
+
+          {/* Live Tracker */}
+          <div className="area-tracker bento-cell" style={{ animationDelay: '360ms' }}>
+            <TrackerPanel />
+          </div>
+
         </div>
       </div>
     </div>

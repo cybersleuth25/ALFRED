@@ -1,5 +1,5 @@
 """
-Protocol Omega - Study Mentor Daemon
+Focus Mode - Study Mentor Daemon
 =====================================
 When activated, Alfred becomes a strict study enforcer:
 1. Vision Watcher: Uses webcam + Gemini to detect phone usage
@@ -14,6 +14,9 @@ import os
 import shared
 import voice_engine
 from llm_engine import USER_NAME
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Import push notification module (optional — graceful if not available)
 try:
@@ -54,10 +57,10 @@ WHITELIST = [
     'zotero', 'mendeley'
 ]
 
-WARNING_TIMEOUT = 15
-VISION_CHECK_INTERVAL = 15  # Check every 15 seconds for phone/distraction
-SCREEN_CHECK_INTERVAL = 120
-OS_CHECK_INTERVAL = 8
+WARNING_TIMEOUT = int(os.getenv("STUDY_WARNING_TIMEOUT", "15"))
+VISION_CHECK_INTERVAL = int(os.getenv("STUDY_VISION_CHECK_INTERVAL", "15"))  # Check every 15 seconds for phone/distraction
+SCREEN_CHECK_INTERVAL = int(os.getenv("STUDY_SCREEN_CHECK_INTERVAL", "120"))
+OS_CHECK_INTERVAL = int(os.getenv("STUDY_OS_CHECK_INTERVAL", "8"))
 
 # -- SCOLDING LINES --
 
@@ -97,6 +100,40 @@ APP_KILLED_LINES = [
     "Consider {app} dealt with, Master {USER_NAME}. Your textbook awaits.",
 ]
 
+LOCKDOWN_ENGAGE_LINES = [
+    f"Lockdown engaged. All distracting applications will be terminated on sight, Master {USER_NAME}. No mercy.",
+    f"Hard lock activated, sir. Any non-study application will be killed immediately. You asked for this.",
+    f"Lockdown mode is now active, Master {USER_NAME}. Zero tolerance for distractions.",
+    f"Understood, sir. Lockdown engaged. Nothing gets through.",
+]
+
+LOCKDOWN_DISENGAGE_LINES = [
+    f"Lockdown disengaged, Master {USER_NAME}. Returning to standard monitoring.",
+    f"Soft mode restored, sir. I will warn before closing apps again.",
+    f"Lockdown lifted. Normal protocol resumed, Master {USER_NAME}.",
+]
+
+HARDCORE_ENGAGE_LINES = [
+    f"Hardcore mode engaged. No warnings. No mercy. Distracting apps will be annihilated on sight, Master {USER_NAME}.",
+    f"Zero tolerance activated, sir. I will not ask twice. Anything off-task dies instantly.",
+    f"Hardcore protocol is live, Master {USER_NAME}. This is the version of you that gets things done.",
+    f"No warnings mode active, sir. You wanted this. Now earn it.",
+]
+
+HARDCORE_DISENGAGE_LINES = [
+    f"Hardcore mode disengaged, Master {USER_NAME}. Returning to standard 15-second warnings.",
+    f"Soft mode restored, sir. I will give you fair warning before closing applications.",
+    f"Understood. Hardcore mode off. Normal monitoring resumed, Master {USER_NAME}.",
+]
+
+HARDCORE_KILLED_LINES = [
+    "Eliminated. Back to work, sir.",
+    "Gone. No warnings. No second chances. Focus.",
+    f"Terminated on sight, Master {USER_NAME}. That is what you asked for.",
+    "Destroyed. You have zero tolerance mode on. Remember that.",
+    "Dealt with. Instantly. As promised.",
+]
+
 MOTIVATION_LINES = [
     f"You are doing well, Master {USER_NAME}. Stay focused and the results will follow.",
     f"Keep it up, sir. Discipline is the bridge between goals and accomplishment.",
@@ -112,6 +149,7 @@ MOTIVATION_LINES = [
 
 # -- GLOBALS --
 _running = False
+_hardcore_mode = False
 _warned_windows = {}
 _session_start_time = 0
 _distraction_count = 0
@@ -121,20 +159,14 @@ _vision_thread = None
 _os_thread = None
 _screen_thread = None
 _mot_thread = None
+_blocker_thread = None
 _pomodoro_thread = None
 
 
 
 def _safe_speak(message):
-    if shared.current_state in ("idle", "listening"):
-        shared.push_state("speaking")
-        shared.push_log(message, "Alfred")
-        shared.push_caption(message)
-        voice_engine.speak(message)
-        shared.push_caption("")
-        shared.push_state("idle")
-        return True
-    return False
+    """Delegates to shared.safe_speak() — centralized TTS with state management."""
+    return shared.safe_speak(message, author="Alfred")
 
 
 def _is_blacklisted(title):
@@ -185,7 +217,7 @@ def _init_gemini():
         from google import genai
         return genai.Client(api_key=api_key)
     except Exception as e:
-        print(f"[Protocol Omega] Gemini init failed: {e}")
+        print(f"[Focus Mode] Gemini init failed: {e}")
         return None
 
 
@@ -195,7 +227,7 @@ def _init_gemini():
 # ============================
 
 def _pomodoro_loop():
-    print("[Protocol Omega] Pomodoro Timer active.")
+    print("[Focus Mode] Pomodoro Timer active.")
     FOCUS_TIME = 25 * 60
     SHORT_BREAK = 5 * 60
     LONG_BREAK = 15 * 60
@@ -256,7 +288,7 @@ def _pomodoro_loop():
             
         time.sleep(1)
         
-    print("[Protocol Omega] Pomodoro Timer stopped.")
+    print("[Focus Mode] Pomodoro Timer stopped.")
 
 
 # ============================
@@ -268,10 +300,10 @@ def _os_watcher_loop():
     try:
         import pygetwindow as gw
     except ImportError:
-        print("[Protocol Omega] pygetwindow not installed. OS watcher disabled.")
+        print("[Focus Mode] pygetwindow not installed. OS watcher disabled.")
         return
 
-    print("[Protocol Omega] OS Watcher active.")
+    print("[Focus Mode] OS Watcher active.")
 
     while _running:
         try:
@@ -285,14 +317,40 @@ def _os_watcher_loop():
             if _is_blacklisted(title):
                 match_name = _get_blacklist_match(title)
 
+                # HARDCORE / LOCKDOWN MODE: Instant kill, no warning
+                if shared.omega_lockdown or _hardcore_mode:
+                    mode_label = "HARDCORE" if _hardcore_mode else "LOCKDOWN"
+                    print(f"[Focus Mode] {mode_label} — Instant kill: {title}")
+                    try:
+                        active_win.close()
+                    except Exception:
+                        # Force kill via taskkill
+                        try:
+                            import subprocess
+                            subprocess.run(['taskkill', '/F', '/FI', f'WINDOWTITLE eq {title}'], 
+                                         capture_output=True, timeout=5)
+                        except Exception:
+                            pass
+                    with _omega_lock:
+                        shared.omega_distractions += 1
+                        if shared.omega_session_id:
+                            import memory_engine
+                            memory_engine.log_study_distraction(shared.omega_session_id, 'app', match_name)
+                    # In hardcore mode, speak a terse kill confirmation
+                    if _hardcore_mode:
+                        _safe_speak(random.choice(HARDCORE_KILLED_LINES))
+                    time.sleep(OS_CHECK_INTERVAL)
+                    continue
+
+                # NORMAL MODE: Warn then close
                 if title in _warned_windows:
                     elapsed = time.time() - _warned_windows[title]
                     if elapsed >= WARNING_TIMEOUT:
-                        print(f"[Protocol Omega] Closing: {title}")
+                        print(f"[Focus Mode] Closing: {title}")
                         try:
                             active_win.close()
                         except Exception as e:
-                            print(f"[Protocol Omega] Failed to close window: {e}")
+                            print(f"[Focus Mode] Failed to close window: {e}")
                         kill_msg = random.choice(APP_KILLED_LINES).format(app=match_name, USER_NAME=USER_NAME)
                         _safe_speak(kill_msg)
                         del _warned_windows[title]
@@ -304,7 +362,7 @@ def _os_watcher_loop():
                 else:
                     _warned_windows[title] = time.time()
                     warn_msg = random.choice(APP_WARNING_LINES).format(app=match_name, sec=WARNING_TIMEOUT, USER_NAME=USER_NAME)
-                    print(f"[Protocol Omega] WARNING: {title}")
+                    print(f"[Focus Mode] WARNING: {title}")
                     _safe_speak(warn_msg)
             else:
                 current_titles = set()
@@ -319,11 +377,44 @@ def _os_watcher_loop():
                         del _warned_windows[warned_title]
 
         except Exception as e:
-            print(f"[Protocol Omega] OS watcher error: {e}")
+            print(f"[Focus Mode] OS watcher error: {e}")
 
         time.sleep(OS_CHECK_INTERVAL)
 
-    print("[Protocol Omega] OS Watcher stopped.")
+    print("[Focus Mode] OS Watcher stopped.")
+
+
+# ============================
+#  PROCESS BLOCKER (Lockdown)
+# ============================
+
+def _process_blocker_loop():
+    """When lockdown is active, scans all running processes and kills blacklisted ones."""
+    import psutil
+    
+    BLACKLISTED_PROCESSES = [
+        'netflix', 'instagram', 'tiktok', 'snapchat',
+        'steam', 'epicgames', 'riot', 'valorant', 'minecraft',
+    ]
+    
+    print("[Focus Mode] Process Blocker thread started (activates during lockdown).")
+    
+    while _running:
+        if shared.omega_lockdown:
+            try:
+                for proc in psutil.process_iter(['name', 'pid']):
+                    try:
+                        pname = proc.info['name'].lower()
+                        if any(blocked in pname for blocked in BLACKLISTED_PROCESSES):
+                            print(f"[Focus Mode] LOCKDOWN — Killing process: {proc.info['name']} (PID {proc.info['pid']})")
+                            proc.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except Exception as e:
+                print(f"[Focus Mode] Process blocker error: {e}")
+        time.sleep(3)
+    
+    print("[Focus Mode] Process Blocker stopped.")
 
 
 # ============================
@@ -331,24 +422,34 @@ def _os_watcher_loop():
 # ============================
 
 def _vision_watcher_loop():
+    # Reuse vision_engine's YOLO model to avoid loading a duplicate (~80MB VRAM saved)
+    model = None
     try:
-        from ultralytics import YOLO
-    except ImportError:
-        print("[Protocol Omega] ultralytics not installed. Vision watcher disabled.")
-        return
-
-    try:
-        print("[Protocol Omega] Loading YOLOv8 object detection model...")
-        model = YOLO("yolov8n.pt")
-    except Exception as e:
-        print(f"[Protocol Omega] YOLO model load failed: {e}")
-        return
+        import vision_engine
+        if vision_engine.YOLO_AVAILABLE and vision_engine.yolo_model:
+            model = vision_engine.yolo_model
+            print("[Focus Mode] Reusing Vision Engine's YOLOv8 model.")
+    except (ImportError, AttributeError):
+        pass
+    
+    if model is None:
+        try:
+            from ultralytics import YOLO
+        except ImportError:
+            print("[Focus Mode] ultralytics not installed. Vision watcher disabled.")
+            return
+        try:
+            print("[Focus Mode] Loading YOLOv8 object detection model...")
+            model = YOLO("yolov8n.pt")
+        except Exception as e:
+            print(f"[Focus Mode] YOLO model load failed: {e}")
+            return
 
     import security_engine
     import study_intelligence
     import cv2
     
-    print("[Protocol Omega] Vision Watcher active (local YOLOv8 engaged).")
+    print("[Focus Mode] Vision Watcher active (local YOLOv8 engaged).")
 
     last_scold_time = 0
     SCOLD_COOLDOWN = 60
@@ -389,7 +490,7 @@ def _vision_watcher_loop():
                     if class_name in DISTRACTING_CLASSES and conf >= DETECTION_CONFIDENCE:
                         detected_distraction = True
                         detected_distraction_name = class_name
-                        print(f"[Protocol Omega] Vision check detected: {class_name} (conf: {conf:.2f})")
+                        print(f"[Focus Mode] Vision check detected: {class_name} (conf: {conf:.2f})")
 
             # 1. Absence Detection
             if person_detected:
@@ -399,12 +500,12 @@ def _vision_watcher_loop():
                 if time.time() - last_person_seen_time > 120 and not person_missing_alerted:
                     # Absent for 2 minutes
                     scold = study_intelligence.generate_dynamic_scold("Master has left their desk and is absent from the study session.")
-                    print("[Protocol Omega] ABSENCE DETECTED!")
+                    print("[Focus Mode] ABSENCE DETECTED!")
                     _safe_speak(scold)
                     person_missing_alerted = True
                     if _telegram_available:
                         try:
-                            telegram_notifier.send_alert(f"⚠️ PROTOCOL OMEGA: Absence detected! {scold}")
+                            telegram_notifier.send_alert(f"⚠️ Focus Mode: Absence detected! {scold}")
                         except Exception:
                             pass
                     # Skip drowsiness/distraction checks if person is absent
@@ -413,21 +514,23 @@ def _vision_watcher_loop():
 
             # 2. Drowsiness Detection
             if face_mesh and person_detected:
+                import mediapipe as mp
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                fm_results = face_mesh.process(rgb_frame)
-                if fm_results.multi_face_landmarks:
-                    ear = study_intelligence.calculate_ear(fm_results.multi_face_landmarks[0], frame.shape[1], frame.shape[0])
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                fm_results = face_mesh.detect(mp_image)
+                if fm_results.face_landmarks:
+                    ear = study_intelligence.calculate_ear(fm_results.face_landmarks[0], frame.shape[1], frame.shape[0])
                     if ear < DROWSY_EAR_THRESHOLD:
                         if drowsy_start_time is None:
                             drowsy_start_time = time.time()
                         elif time.time() - drowsy_start_time > DROWSY_MAX_TIME:
                             scold = study_intelligence.generate_dynamic_scold("Master appears to be falling asleep at their desk. Tell them to wake up immediately.")
-                            print("[Protocol Omega] DROWSINESS DETECTED!")
+                            print("[Focus Mode] DROWSINESS DETECTED!")
                             _safe_speak(scold)
                             drowsy_start_time = None # Reset
                             if _telegram_available:
                                 try:
-                                    telegram_notifier.send_alert(f"😴 PROTOCOL OMEGA: Sleep detected! {scold}")
+                                    telegram_notifier.send_alert(f"😴 Focus Mode: Sleep detected! {scold}")
                                 except Exception:
                                     pass
                     else:
@@ -445,21 +548,21 @@ def _vision_watcher_loop():
                             import memory_engine
                             memory_engine.log_study_distraction(shared.omega_session_id, 'phone', detected_distraction_name)
                     scold = study_intelligence.generate_dynamic_scold(f"holding or looking at a {detected_distraction_name}")
-                    print("[Protocol Omega] PHONE/DEVICE DETECTED!")
+                    print("[Focus Mode] PHONE/DEVICE DETECTED!")
                     _safe_speak(scold)
                     last_scold_time = now
                     if _telegram_available:
                         try:
-                            telegram_notifier.send_alert(f"📱 PROTOCOL OMEGA: Device detected! {scold}")
+                            telegram_notifier.send_alert(f"📱 Focus Mode: Device detected! {scold}")
                         except Exception:
                             pass
 
         except Exception as e:
-            print(f"[Protocol Omega] Vision error: {e}")
+            print(f"[Focus Mode] Vision error: {e}")
 
         time.sleep(VISION_CHECK_INTERVAL)
 
-    print("[Protocol Omega] Vision Watcher stopped.")
+    print("[Focus Mode] Vision Watcher stopped.")
 
 
 # ============================
@@ -470,15 +573,15 @@ def _screen_watcher_loop():
     try:
         from PIL import ImageGrab
     except ImportError:
-        print("[Protocol Omega] Pillow not installed. Screen watcher disabled.")
+        print("[Focus Mode] Pillow not installed. Screen watcher disabled.")
         return
 
     client = _init_gemini()
     if not client:
-        print("[Protocol Omega] No Gemini API. Screen watcher disabled.")
+        print("[Focus Mode] No Gemini API. Screen watcher disabled.")
         return
 
-    print("[Protocol Omega] Screen Content Watcher active.")
+    print("[Focus Mode] Screen Content Watcher active.")
 
     last_scold_time = 0
     SCOLD_COOLDOWN = 90
@@ -512,7 +615,7 @@ def _screen_watcher_loop():
             )
 
             answer = response.text.strip().upper()
-            print(f"[Protocol Omega] Screen check: {answer}")
+            print(f"[Focus Mode] Screen check: {answer}")
 
             if "DISTRACTING" in answer:
                 now = time.time()
@@ -521,25 +624,25 @@ def _screen_watcher_loop():
                         shared.omega_distractions += 1
                         if shared.omega_session_id:
                             import memory_engine
-                            memory_engine.log_study_distraction(shared.omega_session_id, 'phone', detected_distraction_name)
+                            memory_engine.log_study_distraction(shared.omega_session_id, 'screen_content', 'Distracting content detected on screen')
                     import study_intelligence
                     scold = study_intelligence.generate_dynamic_scold("Master is looking at non-educational, distracting content on their computer screen.")
-                    print("[Protocol Omega] DISTRACTION ON SCREEN DETECTED!")
+                    print("[Focus Mode] DISTRACTION ON SCREEN DETECTED!")
                     _safe_speak(scold)
                     last_scold_time = now
                     # Push to phone too
                     if _telegram_available:
                         try:
-                            telegram_notifier.send_alert(f"🖥️ PROTOCOL OMEGA: Distraction detected on screen! {scold}")
+                            telegram_notifier.send_alert(f"🖥️ Focus Mode: Distraction detected on screen! {scold}")
                         except Exception:
                             pass
 
         except Exception as e:
-            print(f"[Protocol Omega] Screen watcher error: {e}")
+            print(f"[Focus Mode] Screen watcher error: {e}")
 
         time.sleep(SCREEN_CHECK_INTERVAL)
 
-    print("[Protocol Omega] Screen Content Watcher stopped.")
+    print("[Focus Mode] Screen Content Watcher stopped.")
 
 
 # ============================
@@ -547,7 +650,7 @@ def _screen_watcher_loop():
 # ============================
 
 def _motivation_loop():
-    print("[Protocol Omega] Motivation engine active.")
+    print("[Focus Mode] Motivation engine active.")
     while _running:
         wait_time = random.randint(1200, 1800)
         elapsed = 0
@@ -557,7 +660,7 @@ def _motivation_loop():
         if _running:
             msg = random.choice(MOTIVATION_LINES)
             _safe_speak(msg)
-    print("[Protocol Omega] Motivation engine stopped.")
+    print("[Focus Mode] Motivation engine stopped.")
 
 
 # ============================
@@ -566,11 +669,11 @@ def _motivation_loop():
 
 
 def activate():
-    global _running, _vision_thread, _os_thread, _screen_thread, _mot_thread, _pomodoro_thread, _warned_windows
+    global _running, _vision_thread, _os_thread, _screen_thread, _mot_thread, _pomodoro_thread, _blocker_thread, _warned_windows
 
     with _omega_lock:
         if _running:
-            return "Protocol Omega is already active, sir."
+            return "Focus Mode is already active, sir."
 
         _running = True
         _warned_windows = {}
@@ -594,17 +697,14 @@ def activate():
 
         # Auto-DND: Mute system volume on Windows
         try:
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            from pycaw.pycaw import AudioUtilities
             devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            volume = devices.EndpointVolume
             shared.omega_pre_mute_vol = volume.GetMasterVolumeLevel()
             volume.SetMute(1, None)
-            print("[Protocol Omega] Auto-DND Engaged (System Audio Muted).")
+            print("[Focus Mode] Auto-DND Engaged (System Audio Muted).")
         except Exception as e:
-            print(f"[Protocol Omega] Auto-DND failed: {e}")
+            print(f"[Focus Mode] Auto-DND failed: {e}")
 
     # --- Browser Tab Cleanup ---
     try:
@@ -622,7 +722,7 @@ def activate():
             is_whitelisted = any(w in title or w in url for w in WHITELIST)
             
             if not is_whitelisted:
-                print(f"[Protocol Omega] Closing non-study tab: {title}")
+                print(f"[Focus Mode] Closing non-study tab: {title}")
                 tabs_to_close.append(tab)
         
         # Close all non-study tabs concurrently
@@ -640,9 +740,9 @@ def activate():
                 closed_count = sum(1 for r in results if r)
         
         if closed_count > 0:
-            print(f"[Protocol Omega] Cleaned up {closed_count} non-study browser tabs.")
+            print(f"[Focus Mode] Cleaned up {closed_count} non-study browser tabs.")
     except Exception as e:
-        print(f"[Protocol Omega] Browser cleanup failed: {e}")
+        print(f"[Focus Mode] Browser cleanup failed: {e}")
 
     _os_thread = threading.Thread(target=_os_watcher_loop, daemon=True, name="OmegaOS")
     _os_thread.start()
@@ -659,22 +759,43 @@ def activate():
     _pomodoro_thread = threading.Thread(target=_pomodoro_loop, daemon=True, name="OmegaPomodoro")
     _pomodoro_thread.start()
 
+    _blocker_thread = threading.Thread(target=_process_blocker_loop, daemon=True, name="OmegaBlocker")
+    _blocker_thread.start()
+
+    # Auto Lo-Fi: Start a study playlist on Spotify
+    try:
+        from tools.core_tools import _get_spotify_user_token
+        import requests as _req
+        token = _get_spotify_user_token()
+        playlist_uri = os.getenv("OMEGA_PLAYLIST_URI", "spotify:playlist:0vvXsWCC9xrXsKd4FyS8kM")
+        if token:
+            _req.put(
+                "https://api.spotify.com/v1/me/player/play",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"context_uri": playlist_uri},
+                timeout=5
+            )
+            print(f"[Focus Mode] Auto Lo-Fi: Started study playlist.")
+    except Exception as e:
+        print(f"[Focus Mode] Auto Lo-Fi failed (non-critical): {e}")
+
     print("\n" + "=" * 50)
-    print(" PROTOCOL OMEGA ENGAGED ".center(50, "="))
+    print(" Focus Mode ENGAGED ".center(50, "="))
     print("=" * 50)
 
-    return "Protocol Omega is now active. Unnecessary tabs closed. Let the studying commence."
+    return "Focus Mode is now active. Unnecessary tabs closed. Let the studying commence."
 
-def deactivate():
+def deactivate(speak: bool = False):
     global _running, _warned_windows
 
     with _omega_lock:
         if not _running:
-            return "Protocol Omega is not currently active, sir."
+            return "Focus Mode is not currently active, sir."
 
         _running = False
         _warned_windows = {}
         shared.focus_mode_active = False
+        shared.omega_lockdown = False  # Reset lockdown on deactivate
         
         session_id = shared.omega_session_id
         distractions = shared.omega_distractions
@@ -688,21 +809,18 @@ def deactivate():
 
         # Restore System Volume
         try:
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            from pycaw.pycaw import AudioUtilities
             devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            volume = devices.EndpointVolume
             volume.SetMute(0, None)
             if hasattr(shared, 'omega_pre_mute_vol'):
                 volume.SetMasterVolumeLevel(shared.omega_pre_mute_vol, None)
-            print("[Protocol Omega] Auto-DND Disengaged (System Audio Restored).")
+            print("[Focus Mode] Auto-DND Disengaged (System Audio Restored).")
         except Exception:
             pass
 
     print("\n" + "=" * 50)
-    print(" PROTOCOL OMEGA DISENGAGED ".center(50, "="))
+    print(" Focus Mode DISENGAGED ".center(50, "="))
     print(f" Session Time: {elapsed_minutes} mins | Distractions: {distractions} | Pomodoros: {cycles}")
     print("=" * 50)
 
@@ -718,7 +836,7 @@ def deactivate():
                 items = [f"{k} ({v} times)" for k,v in breakdown.items()]
                 breakdown_str = f"Specific Distractions caught: {', '.join(items)}."
 
-        prompt = f"""You are Alfred, a loyal AI butler. Master {USER_NAME} just finished a study session with Protocol Omega.
+        prompt = f"""You are Alfred, a loyal AI butler. Master {USER_NAME} just finished a study session with Focus Mode.
 Session length: {elapsed_minutes} minutes.
 Distractions detected (phone or off-topic browsing): {distractions}.
 {breakdown_str}
@@ -731,7 +849,7 @@ Keep it under 3 sentences, be professional and supportive, spoken format."""
         
         res = llm_engine.chat(messages=[{'role': 'user', 'content': prompt}], options={'temperature': 0.6, 'num_predict': 100})
         briefing = res['message']['content'].strip()
-        print(f"[Protocol Omega] Post-Study Report:\n{briefing}")
+        print(f"[Focus Mode] Post-Study Report:\n{briefing}")
         
         # Save to DB
         if session_id:
@@ -739,7 +857,7 @@ Keep it under 3 sentences, be professional and supportive, spoken format."""
             
         if _telegram_available:
             try:
-                msg = f"📊 PROTOCOL OMEGA SESSION ENDED\n\n"
+                msg = f"📊 Focus Mode SESSION ENDED\n\n"
                 msg += f"⏱ Time: {elapsed_minutes} minutes\n"
                 msg += f"🍅 Pomodoros: {cycles}\n"
                 msg += f"❌ Distractions: {distractions}\n\n"
@@ -748,14 +866,61 @@ Keep it under 3 sentences, be professional and supportive, spoken format."""
             except Exception:
                 pass
             
-        _safe_speak(briefing)
-        return f"Protocol Omega deactivated. {briefing}"
+        if speak:
+            _safe_speak(briefing)
+        return f"Focus Mode deactivated. {briefing}"
     except Exception as e:
-        print(f"[Protocol Omega] Briefing generation failed: {e}")
+        print(f"[Focus Mode] Briefing generation failed: {e}")
         if session_id:
             import memory_engine
             memory_engine.end_study_session(session_id, "Briefing failed.", cycles)
-        return f"Protocol Omega has been deactivated. You studied for {elapsed_minutes} minutes with {distractions} recorded distractions."
+        return f"Focus Mode has been deactivated. You studied for {elapsed_minutes} minutes with {distractions} recorded distractions."
+
+    finally:
+        # Auto Lo-Fi: Pause Spotify on deactivate
+        try:
+            from tools.core_tools import spotify_pause
+            spotify_pause()
+            print("[Focus Mode] Auto Lo-Fi: Spotify paused.")
+        except Exception:
+            pass
 
 def is_active():
     return _running
+
+def is_hardcore():
+    return _hardcore_mode
+
+def engage_lockdown():
+    """Activates lockdown mode — instant kill for distracting apps."""
+    if not _running:
+        return "Focus Mode is not active, sir. Lockdown requires an active study session."
+    shared.push_lockdown_state(True)
+    print("[Focus Mode] LOCKDOWN MODE ENGAGED")
+    return random.choice(LOCKDOWN_ENGAGE_LINES)
+
+def disengage_lockdown():
+    """Deactivates lockdown mode — returns to warning-based monitoring."""
+    if not shared.omega_lockdown:
+        return "Lockdown is not currently active, sir."
+    shared.push_lockdown_state(False)
+    print("[Focus Mode] LOCKDOWN MODE DISENGAGED")
+    return random.choice(LOCKDOWN_DISENGAGE_LINES)
+
+def engage_hardcore():
+    """Activates hardcore mode — instant kill, no warnings, stern dialogue."""
+    global _hardcore_mode
+    if not _running:
+        return "Focus Mode is not active, sir. Hardcore requires an active study session."
+    _hardcore_mode = True
+    print("[Focus Mode] HARDCORE MODE ENGAGED")
+    return random.choice(HARDCORE_ENGAGE_LINES)
+
+def disengage_hardcore():
+    """Deactivates hardcore mode — returns to standard warning-based monitoring."""
+    global _hardcore_mode
+    if not _hardcore_mode:
+        return "Hardcore mode is not currently active, sir."
+    _hardcore_mode = False
+    print("[Focus Mode] HARDCORE MODE DISENGAGED")
+    return random.choice(HARDCORE_DISENGAGE_LINES)

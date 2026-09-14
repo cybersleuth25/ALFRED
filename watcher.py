@@ -52,11 +52,11 @@ def check_reminders():
             
     conn.close()
 
-# Run the check immediately, then schedule it
-check_reminders()
-schedule.every(60).seconds.do(check_reminders)
-
+# Only run side effects when executed directly, not on import
 if __name__ == "__main__":
+    check_reminders()
+    schedule.every(60).seconds.do(check_reminders)
+
     print("="*50)
     print(" ALFRED WATCHER DAEMON ONLINE ".center(50, "="))
     print("="*50)

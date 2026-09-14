@@ -16,6 +16,9 @@ authorized_voice.json
 vosk-model-*/
 vosk_model/
 vosk_spk/
+models/piper/*.wav
+models/piper/test_piper.py
+*.task
 
 # Python caches and virtual environments
 __pycache__/
@@ -29,6 +32,7 @@ Alfred_Workspace/contacts.json
 .vscode/
 .idea/
 .DS_Store
+node_modules/
 
 # Graphify knowledge graph output
 graphify-out/
@@ -41,6 +45,7 @@ test_tracker2.py
 test_yolo.py
 list_models.py
 download_vosk.py
+download_kokoro.py
 
 # Audio cache (generated TTS files)
 Alfred_Workspace/audio_cache/
@@ -50,3 +55,8 @@ Alfred_Workspace/sandbox_skills/
 
 # Journal and personal data
 Alfred_Workspace/journal.txt
+
+logs/
+*.log
+assets/incidents/
+Alfred_Workspace/incidents/

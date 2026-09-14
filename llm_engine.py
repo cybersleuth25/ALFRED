@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(__file__))
 from tools import core_tools
 import memory_engine
 import shared
+import persona_engine
 
 # ── Pre-compiled Regex Patterns (compiled once at module load) ──
 _RE_BRIGHTNESS = re.compile(r'(?:set |change )?brightness (?:to |at )?(\d+)')
@@ -21,6 +22,7 @@ _RE_WHATSAPP = re.compile(r'(?:whatsapp|message)\s+(?:to\s+)?(?:my\s+)?(.+?)\s+(
 _RE_WHATSAPP_SIMPLE = re.compile(r'(?:whatsapp|message)\s+(?:to\s+)?(?:my\s+)?(\w+)\s+(.+)', re.IGNORECASE)
 _RE_REMINDER = re.compile(r'remind me (?:to|about)?\s+(.+)\s+in\s+(\d+)\s+min', re.IGNORECASE)
 _RE_KNOWLEDGE = re.compile(r'^(who|what|where|when|why|how|which|tell me|explain|describe)\b\s+(.+)', re.IGNORECASE)
+_RE_INSTAGRAM = re.compile(r'(?:check|read|fetch|scrape) instagram (?:for )?(?:what )?(?:is on )?(?:@)?(\w+)', re.IGNORECASE)
 
 # ── Tool Signal Keywords (checked to decide if a prompt needs tool access) ──
 _TOOL_SIGNAL_WORDS = frozenset([
@@ -44,10 +46,11 @@ _TOOL_SIGNAL_WORDS = frozenset([
     # Messaging
     'whatsapp', 'message', 'text', 'send',
     # Search & Research
-    'search', 'google', 'look up', 'find out', 'deep dive', 'deep research', 'swarm',
+    'search', 'google', 'look up', 'find out', 'deep dive', 'deep research', 'swarm', 'research', 'dossier', 'investigate',
     # News & OSINT
     'news', 'headlines', 'briefing', 'earthquake', 'quake',
-    'email', 'mail', 'osint', 'social media', 'account',
+    'world', 'global', 'happening',
+    'email', 'mail', 'osint', 'social media', 'account', 'instagram', 'insta',
     # System Hardware
     'battery', 'brightness', 'wifi', 'bluetooth', 'lock', 'sleep', 'shutdown', 'screenshot',
     # Browser
@@ -76,14 +79,23 @@ def chat(messages, options=None, format=None):
     """Unified chat function for external modules to use the active brain."""
     client, model_name = shared.get_brain()
     try:
-        res = client.chat(
-            model=model_name,
-            messages=messages,
-            options=options or {},
-            format=format,
-            keep_alive='1h'
-        )
-        return res
+        kwargs = {
+            "model": model_name,
+            "messages": messages,
+        }
+        if format == 'json':
+            kwargs["response_format"] = {"type": "json_object"}
+        if options and 'temperature' in options:
+            kwargs["temperature"] = options['temperature']
+            
+        res = client.chat.completions.create(**kwargs)
+        
+        # Return an ollama-compatible dictionary so we don't break external callers
+        return {
+            'message': {
+                'content': res.choices[0].message.content
+            }
+        }
     except Exception as e:
         print(f"[LLM] Chat failed: {e}")
         raise e
@@ -91,28 +103,38 @@ def chat(messages, options=None, format=None):
 
 # --- Instant canned responses (NO LLM call, 0 seconds) ---
 _GREETINGS = {
-    'hello': ["Good day, Master {name}. How may I be of service?", "Hello, sir. At your disposal, as always."],
-    'hi': ["Good day, sir. What can I do for you?", "Hello, Master {name}. How may I assist?"],
-    'hey': ["Greetings, sir. How may I help?", "At your service, Master {name}."],
-    'how are you': ["Quite well, thank you, Master {name}. And yourself?", "Functioning splendidly, sir. How may I assist you today?"],
-    'good morning': ["A fine morning indeed, Master {name}. What shall we tackle today?", "Good morning, sir. I trust you slept well."],
-    'good evening': ["Good evening, Master {name}. How may I be of assistance?", "A pleasant evening to you, sir."],
-    'good night': ["Good night, Master {name}. Rest well, sir.", "Pleasant dreams, sir. I shall keep watch."],
-    'thank you': ["You're most welcome, sir.", "My pleasure entirely, Master {name}.", "Happy to help, sir."],
-    'thanks': ["You're welcome, sir.", "Of course, Master {name}.", "Anytime, sir."],
-    'what can you do': ["I can check the weather, manage your reminders, handle files, keep a journal, and of course, provide sparkling conversation, sir.", "Quite a lot, sir. Weather, reminders, file management, journaling, and witty banter."],
-    'who are you': ["I am Alfred, your personal AI butler, sir. At your service.", "Alfred, sir. Your loyal digital valet."],
+    'hello': ["Hey there, {name}! What's up?", "Hello! Good to hear from you, sir. What do you need?", "Hey, {name}! I'm here. What can I do for you?"],
+    'hi': ["Hey! What's on your mind, sir?", "Hi, {name}! I'm all ears.", "Hey there! What do you need?"],
+    'hey': ["Hey hey! What can I help with, sir?", "Hey, {name}! Ready when you are.", "What's up? I'm listening."],
+    'how are you': ["I'm doing great, {name}! Better now that you're here. How about you?", "Honestly? Pretty good, sir. Always happy when we're working together. How are you?", "Can't complain! Well, technically I can, but I won't. How are you doing, {name}?"],
+    'good morning': ["Morning, {name}! Hope you slept well. What are we doing today?", "Good morning! I love a fresh start, sir. What's the plan?", "Morning! Ready to make today awesome, {name}?"],
+    'good evening': ["Evening, {name}! How was your day?", "Good evening, sir! Nice to see you. What do you need?", "Hey, good evening! Hope the day treated you well, {name}."],
+    'good night': ["Night, {name}! Get some rest, you've earned it.", "Good night, sir. I'll keep an eye on things while you sleep.", "Sweet dreams, {name}! I'll be right here when you wake up."],
+    'thank you': ["Anytime, {name}! That's what I'm here for.", "You're welcome, sir! Happy to help.", "Of course! Don't even mention it, {name}.", "Always, sir. It's genuinely my pleasure."],
+    'thanks': ["No problem at all, {name}!", "You got it, sir!", "Anytime! That's what friends are for.", "Happy to help, {name}!"],
+    'what can you do': ["Oh, where do I even start? Weather, reminders, music, file management, web search, journaling, taking screenshots, controlling your desktop, deep research, and honestly just being a great conversationalist, sir.", "A lot, actually! Think of me as your personal assistant who never sleeps and never complains, {name}. Weather, reminders, music, research, you name it."],
+    'who are you': ["I'm Alfred! Your AI companion, sir. Part butler, part best friend, fully dedicated to making your life easier.", "I'm Alfred, {name}. Think of me as the friend who's always available, always helpful, and never borrows money."],
 }
 
 def _get_canned_response(prompt: str):
     """Return instant response for common phrases, or None."""
     lower = prompt.lower().strip().rstrip('?!.,')
-    # Use word matching to prevent 'hi' triggering on 'Chikkamagaluru'
     words = lower.split()
     
+    # If the user is asking a longer question/command, don't interrupt it with a canned greeting.
+    if len(words) > 4:
+        return None
+        
     for key, responses in _GREETINGS.items():
-        if lower == key or lower.startswith(f"{key} ") or key in words:
-            return random.choice(responses).format(name=USER_NAME)
+        if lower == key or (lower.startswith(f"{key} ") and len(words) <= 3) or key in words and len(words) <= 3:
+            resp = random.choice(responses)
+            import persona_engine
+            persona = persona_engine.get_active_persona()
+            # Dynamically adapt the response to the persona's title and honorific
+            resp = resp.replace("Master {name}", persona.get_title(USER_NAME))
+            if "sir" in resp and persona.honorific != "sir":
+                resp = resp.replace("sir", persona.honorific)
+            return resp.format(name=USER_NAME)
     return None
 
 # --- Semantic Memory Helpers ---
@@ -148,6 +170,19 @@ def _auto_save_memory(user_msg: str, alfred_response: str):
         # Combine user message and response into a single memory chunk
         memory_text = f"User asked: {user_msg}. Alfred responded: {alfred_response[:200]}"
         memory_engine.store_memory(memory_text, category='conversation')
+
+        # Auto-extract entities and relationships into the Knowledge Graph (Second Brain)
+        try:
+            import knowledge_graph
+            import threading
+            threading.Thread(
+                target=knowledge_graph.extract_and_link_from_text,
+                args=(f"User: {user_msg}\nAlfred: {alfred_response}",),
+                daemon=True,
+                name="KG-Extractor"
+            ).start()
+        except Exception:
+            pass
     except Exception as e:
         print(f"[Memory] Auto-save failed (non-critical): {e}")
 
@@ -166,9 +201,13 @@ _TOOL_KEYWORDS = {
     'weather': 'check_weather', 'temperature': 'check_weather', 'rain': 'check_weather',
     'hot': 'check_weather', 'cold': 'check_weather', 'forecast': 'check_weather',
     'journal': 'read_journal', 'diary': 'read_journal',
-    'earthquake': 'get_earthquakes', 'quake': 'get_earthquakes', 'seismic': 'get_earthquakes',
+    'earthquake': 'get_earthquakes', 'earthquakes': 'get_earthquakes', 'quake': 'get_earthquakes', 'seismic': 'get_earthquakes',
     'briefing': 'daily_briefing', 'brief me': 'daily_briefing', 'intelligence': 'daily_briefing',
-    'news': 'daily_briefing', 'headlines': 'daily_briefing', 'brief': 'daily_briefing',
+    'news': 'get_news', 'headlines': 'get_news', 'brief': 'daily_briefing',
+    'with the world': 'get_news', 'in the world': 'get_news', 'around the world': 'get_news',
+    'world news': 'get_news', 'world updates': 'get_news', 'current events': 'get_news',
+    'global news': 'get_news', 'whats happening': 'get_news', "what's happening": 'get_news',
+    'whats going on': 'get_news', "what's going on": 'get_news',
     'battery': 'get_battery_status', 'charge': 'get_battery_status',
     'tabs': 'list_browser_tabs', 'tab': 'list_browser_tabs',
     'crop': 'generate_district_health_score', 'dam': 'generate_district_health_score', 'civic': 'generate_district_health_score',
@@ -187,6 +226,24 @@ def _detect_tool_shortcut(prompt: str):
         if keyword in lower:
             return tool_name
     return None
+
+def prewarm_model():
+    """Background pre-warming task run at boot to eliminate first-call cold-start latencies."""
+    try:
+        # Pre-warm semantic memory embedding model
+        memory_engine.search_memories("warmup", top_k=1)
+    except Exception:
+        pass
+    try:
+        # Pre-warm LLM brain connection
+        client, model_name = shared.get_brain()
+        client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1
+        )
+    except Exception:
+        pass
 
 # --- Sensors ---
 def _get_time_of_day() -> str:
@@ -207,8 +264,8 @@ AGENT_PROFILES = {
         "tools": 'create_file(filepath,content), delete_file(filepath), rename_file(old,new), move_file(src,dest), organize_workspace(dir), launch_application(app), toggle_system_volume(action), play_music(song), get_battery_status(), set_brightness(level), toggle_wifi(action), toggle_bluetooth(action), lock_pc(), sleep_pc(), shutdown_pc(), set_volume(level), take_screenshot(), analyze_screen(query), get_screen_info(), mouse_move_and_click(x,y,button,double_click), keyboard_type(text,press_enter), keyboard_press(key), keyboard_hotkey(key1,key2), learn_new_skill(skill)'
     },
     "memory": {
-        "role": "You are the Memory and Scholar Agent. You handle reminders, facts, journaling, and you can query the user's Photographic Screen Memory or local document Library.",
-        "tools": 'set_dynamic_reminder(minutes,topic), add_reminder(task,deadline?), list_reminders(), complete_reminder(task_id), delete_reminder(task_id), clear_all_reminders(), remember_fact(fact), forget_fact(fact_id), journal_entry(content), read_journal(), query_library(query), recall_memories(query)'
+        "role": "You are the Memory and Scholar Agent. You handle reminders, facts, journaling, Knowledge Graph relationships, and you can query the user's Photographic Screen Memory or local document Library.",
+        "tools": 'set_dynamic_reminder(minutes,topic), add_reminder(task,deadline?), list_reminders(), complete_reminder(task_id), delete_reminder(task_id), clear_all_reminders(), remember_fact(fact), forget_fact(fact_id), journal_entry(content), read_journal(), query_library(query), recall_memories(query), query_knowledge_graph(entity_name)'
     },
     "communications": {
         "role": "You are the Communications Agent. You handle sending messages.",
@@ -252,6 +309,36 @@ def _build_agent_prompt(agent_name: str) -> str:
     except Exception:
         pass  # Non-critical — don't break the agent if memory search fails
 
+    # --- NEW: Inject contextual awareness (what the user is currently doing) ---
+    try:
+        import shared
+        if shared.context_current_activity and shared.context_current_activity != "idle":
+            import time as _time
+            activity_duration = int((_time.time() - shared.context_activity_since) / 60) if shared.context_activity_since > 0 else 0
+            context_section += f"\nCURRENT CONTEXT: User has been {shared.context_current_activity} for {activity_duration} minutes. Presence: {shared.context_presence}."
+    except Exception:
+        pass  # Non-critical
+
+    # --- NEW: Inject Emotional Intelligence / Mood Adaptation ---
+    try:
+        import mood_engine
+        mood_mod = mood_engine.get_mood_prompt_modifier()
+        if mood_mod:
+            context_section += f"\n{mood_mod}"
+    except Exception:
+        pass
+
+    # --- NEW: Inject Knowledge Graph context if relevant ---
+    try:
+        if _conversation_history:
+            last_text = _conversation_history[-1]["content"]
+            import knowledge_graph
+            kg_info = knowledge_graph.query_knowledge_summary(last_text)
+            if kg_info:
+                context_section += f"\n{kg_info}"
+    except Exception:
+        pass
+
     profile = AGENT_PROFILES.get(agent_name, AGENT_PROFILES["osint"])
     
     # Dynamically inject learned skills into the system agent
@@ -293,6 +380,16 @@ def _needs_tools(prompt: str) -> bool:
     lower = prompt.lower()
     return any(word in lower for word in _TOOL_SIGNAL_WORDS)
 
+def _safe_print(text: str):
+    """Prints text safely on Windows terminals without crashing on unsupported Unicode characters."""
+    try:
+        print(text)
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        try:
+            print(text.encode('ascii', errors='replace').decode('ascii'))
+        except Exception:
+            pass
+
 def _fast_respond(prompt: str, speech: str, t0: float, save_memory: bool = True, tts_callback=None) -> str:
     """Common handler for all fast-path responses. Logs, saves history, and returns."""
     global _conversation_history
@@ -302,7 +399,7 @@ def _fast_respond(prompt: str, speech: str, t0: float, save_memory: bool = True,
     memory_engine.save_conversation_turn('assistant', speech)
     if save_memory:
         _auto_save_memory(prompt, speech)
-    print(f"\n[Alfred says]: {speech}  ({time.time()-t0:.1f}s)")
+    _safe_print(f"\n[Alfred says]: {speech}  ({time.time()-t0:.1f}s)")
     if tts_callback:
         tts_callback(speech)
     return speech
@@ -341,6 +438,30 @@ def generate_response(prompt: str, tts_callback=None) -> str:
         else:
             return _fast_respond(prompt, "Protocol Omega is not currently active, sir.", t0, tts_callback=tts_callback)
 
+    # ── PATH -0.3: WORKFLOW MACROS / ROUTINES EXECUTION ──
+    try:
+        import routine_engine
+        matched_routine = routine_engine.match_voice_trigger(lower_prompt)
+        if matched_routine:
+            print(f"[Fast-path] Matched routine: {matched_routine['display_name']}")
+            res = routine_engine.execute_routine(matched_routine["name"])
+            return _fast_respond(prompt, res, t0, tts_callback=None)
+    except Exception as e:
+        print(f"[Routine Fast-Path Error] {e}")
+
+    # ── PATH -0.2: CREATE ROUTINE FROM VOICE ──
+    if any(lower_prompt.startswith(prefix) for prefix in ['create a routine', 'create routine', 'make a routine', 'new routine']):
+        try:
+            import routine_engine
+            res = routine_engine.create_routine_from_prompt(prompt)
+            if "error" in res:
+                return _fast_respond(prompt, f"I had difficulty compiling that routine, sir: {res['error']}", t0, tts_callback=tts_callback)
+            display = res.get("display_name", res.get("name", "Custom Routine"))
+            return _fast_respond(prompt, f"Routine '{display}' has been created and saved, sir. You can trigger it anytime by saying its name.", t0, tts_callback=tts_callback)
+        except Exception as e:
+            return _fast_respond(prompt, f"Failed to create routine, sir: {e}", t0, tts_callback=tts_callback)
+
+
     # ── PATH 0: INSTANT — canned response, ZERO LLM calls ──
     canned = _get_canned_response(prompt)
     if canned:
@@ -352,7 +473,7 @@ def generate_response(prompt: str, tts_callback=None) -> str:
     if shortcut_tool:
         print(f"[Fast-path] Detected tool shortcut: {shortcut_tool}")
         tool_result = core_tools.execute_tool(shortcut_tool, {})
-        print(f"       Result: {tool_result}")
+        _safe_print(f"       Result: {tool_result}")
         return _fast_respond(prompt, f"Here's what I found, sir. {tool_result}", t0, tts_callback=tts_callback)
 
     # ── PATH 1.5: FAST APP LAUNCH (handles "open X and play Y" too) ──
@@ -427,15 +548,60 @@ def generate_response(prompt: str, tts_callback=None) -> str:
             tool_result = core_tools.execute_tool("send_whatsapp", {"contact_name": contact, "message": message})
             return _fast_respond(prompt, tool_result, t0, tts_callback=tts_callback)
 
-    # ── PATH 1.8: FAST REMINDERS ──
-    if lower_prompt.startswith("remind me"):
-        match = _RE_REMINDER.search(lower_prompt)
-        if match:
-            topic = match.group(1).strip()
-            minutes = match.group(2).strip()
-            print(f"[Fast-path] Detected reminder: '{topic}' in {minutes} min")
-            core_tools.execute_tool("set_dynamic_reminder", {"minutes": minutes, "topic": topic})
-            return _fast_respond(prompt, f"Right away, sir. I will remind you to {topic} in {minutes} minutes.", t0, tts_callback=tts_callback)
+    # ── PATH 1.8: FAST REMINDERS & TASKS ──
+    # Check listing reminders
+    if any(lower_prompt.startswith(p) for p in ['list reminders', 'show reminders', 'what are my reminders', 'my reminders', 'my tasks', 'list tasks', 'show tasks', 'what are my tasks']):
+        tool_result = core_tools.execute_tool("list_reminders", {})
+        return _fast_respond(prompt, tool_result, t0, tts_callback=tts_callback)
+
+    # Check timed reminders in minutes: "remind me to X in Y min", "remind me in Y min to X", "set a reminder for X in Y min"
+    timed_min_match = (
+        re.search(r'remind me (?:to|about)?\s+(.+?)\s+in\s+(\d+)\s*(?:mins?|minutes?|m\b)', lower_prompt, re.IGNORECASE) or
+        re.search(r'remind me in\s+(\d+)\s*(?:mins?|minutes?|m\b)\s*(?:to|about)?\s+(.+)', lower_prompt, re.IGNORECASE) or
+        re.search(r'set (?:a )?reminder (?:for|to|about)?\s*(.+?)\s+in\s+(\d+)\s*(?:mins?|minutes?|m\b)', lower_prompt, re.IGNORECASE) or
+        re.search(r'set (?:a )?reminder in\s+(\d+)\s*(?:mins?|minutes?|m\b)\s*(?:for|to|about)?\s*(.+)', lower_prompt, re.IGNORECASE)
+    )
+    if timed_min_match:
+        groups = timed_min_match.groups()
+        if groups[0].isdigit():
+            minutes = int(groups[0])
+            topic = groups[1].strip("., ")
+        else:
+            topic = groups[0].strip("., ")
+            minutes = int(groups[1])
+        print(f"[Fast-path] Setting dynamic reminder: '{topic}' in {minutes} min")
+        core_tools.execute_tool("set_dynamic_reminder", {"minutes": minutes, "topic": topic})
+        return _fast_respond(prompt, f"Right away, sir. I will remind you to {topic} in {minutes} minutes.", t0, tts_callback=tts_callback)
+
+    # Check hour-based reminders: "remind me to X in Y hours", "remind me in Y hours to X"
+    timed_hour_match = (
+        re.search(r'remind me (?:to|about)?\s+(.+?)\s+in\s+(\d+)\s*(?:hours?|hrs?|h\b)', lower_prompt, re.IGNORECASE) or
+        re.search(r'remind me in\s+(\d+)\s*(?:hours?|hrs?|h\b)\s*(?:to|about)?\s+(.+)', lower_prompt, re.IGNORECASE) or
+        re.search(r'set (?:a )?reminder (?:for|to|about)?\s*(.+?)\s+in\s+(\d+)\s*(?:hours?|hrs?|h\b)', lower_prompt, re.IGNORECASE) or
+        re.search(r'set (?:a )?reminder in\s+(\d+)\s*(?:hours?|hrs?|h\b)\s*(?:for|to|about)?\s*(.+)', lower_prompt, re.IGNORECASE)
+    )
+    if timed_hour_match:
+        groups = timed_hour_match.groups()
+        if groups[0].isdigit():
+            hours = int(groups[0])
+            topic = groups[1].strip("., ")
+        else:
+            topic = groups[0].strip("., ")
+            hours = int(groups[1])
+        minutes = hours * 60
+        print(f"[Fast-path] Setting dynamic reminder: '{topic}' in {hours} hour(s)")
+        core_tools.execute_tool("set_dynamic_reminder", {"minutes": minutes, "topic": topic})
+        return _fast_respond(prompt, f"Certainly, sir. I have scheduled a reminder for {hours} hour{'s' if hours > 1 else ''} from now to {topic}.", t0, tts_callback=tts_callback)
+
+    # General reminder without time: "remind me to buy groceries", "add task finish homework"
+    if any(lower_prompt.startswith(p) for p in ["remind me to ", "remind me about ", "add task ", "add reminder "]):
+        for prefix in ["remind me to ", "remind me about ", "add task ", "add reminder "]:
+            if lower_prompt.startswith(prefix):
+                topic = lower_prompt[len(prefix):].strip("., ")
+                if topic:
+                    print(f"[Fast-path] Adding general task: '{topic}'")
+                    core_tools.execute_tool("add_reminder", {"task": topic})
+                    return _fast_respond(prompt, f"Understood, sir. I have added '{topic}' to your task list.", t0, tts_callback=tts_callback)
 
     # ── PATH 1.85: GLOBE VIEW (3D World Intelligence) ──
     globe_show_triggers = ['show me the world', 'show the world', 'show globe', 'open globe',
@@ -490,13 +656,13 @@ def generate_response(prompt: str, tts_callback=None) -> str:
     # ── PATH 1.88: FAST WIFI/BLUETOOTH TOGGLE ──
     if 'wifi' in lower_prompt or 'wi-fi' in lower_prompt:
         action = 'disable' if any(w in lower_prompt for w in ['off', 'disable', 'turn off', 'disconnect']) else 'enable'
-        print(f"[Fast-path] WiFi → {action}")
+        print(f"[Fast-path] WiFi: {action}")
         tool_result = core_tools.execute_tool("toggle_wifi", {"action": action})
         return _fast_respond(prompt, f"Done, sir. {tool_result}", t0, tts_callback=tts_callback)
 
     if 'bluetooth' in lower_prompt:
         action = 'disable' if any(w in lower_prompt for w in ['off', 'disable', 'turn off', 'disconnect']) else 'enable'
-        print(f"[Fast-path] Bluetooth → {action}")
+        print(f"[Fast-path] Bluetooth: {action}")
         tool_result = core_tools.execute_tool("toggle_bluetooth", {"action": action})
         return _fast_respond(prompt, f"Done, sir. {tool_result}", t0, tts_callback=tts_callback)
 
@@ -516,6 +682,14 @@ def generate_response(prompt: str, tts_callback=None) -> str:
         return _fast_respond(prompt, f"Done, sir. {tool_result}", t0, tts_callback=tts_callback)
 
 
+    # ── PATH 1.89: FAST INSTAGRAM ──
+    insta_match = _RE_INSTAGRAM.search(lower_prompt)
+    if insta_match:
+        username = insta_match.group(1).strip()
+        print(f"[Fast-path] Instagram check for: '@{username}'")
+        tool_result = core_tools.execute_tool("fetch_instagram_posts", {"username": username})
+        return _fast_respond(prompt, f"Here is the latest from Instagram, sir.\n{tool_result}", t0, tts_callback=tts_callback)
+
     # ── PATH 1.9: FAST WEB SEARCH ──
     if lower_prompt.startswith("search ") or lower_prompt.startswith("google ") or lower_prompt.startswith("look up "):
         query = lower_prompt.split(" ", 1)[1].strip("., ")
@@ -527,6 +701,21 @@ def generate_response(prompt: str, tts_callback=None) -> str:
         tool_result = core_tools.execute_tool("search_web", {"query": query})
         return _fast_respond(prompt, f"Here's what I found on the web, sir. {tool_result}", t0, tts_callback=tts_callback)
 
+    # ── PATH 1.95: FAST DEEP RESEARCH SWARM ──
+    _deep_research_prefixes = [
+        "deep research on ", "deep research ", "conduct deep research on ", "conduct research on ",
+        "run deep research on ", "run a deep research on ", "research deeply ", "deep dive on ",
+        "deep dive into ", "investigate deeply ", "swarm research on ", "swarm research "
+    ]
+    for prefix in _deep_research_prefixes:
+        if lower_prompt.startswith(prefix):
+            topic = lower_prompt[len(prefix):].strip("., ")
+            print(f"[Fast-path] Deep Research Swarm requested on: '{topic}'")
+            if tts_callback:
+                tts_callback(f"Deploying deep research swarm on {topic}, sir. I'll analyze multiple sources and compile a dossier for you.")
+            tool_result = core_tools.execute_tool("deep_research_swarm", {"topic": topic})
+            return _fast_respond(prompt, tool_result, t0, tts_callback=tts_callback)
+
     # ── PATH 1.10: KNOWLEDGE QUESTIONS → AUTO WEB SEARCH ──
     _self_refs = ['yourself', 'you', 'alfred', 'your name', 'your job', 'your purpose',
                   ' my ', 'my ', ' me ', 'me?', 'about me', ' i ']
@@ -537,7 +726,7 @@ def generate_response(prompt: str, tts_callback=None) -> str:
         query = knowledge_match.group(2).strip("?!., ")
         prefix = knowledge_match.group(1).strip()
         
-        print(f"[Fast-path] Knowledge question: '{prefix} {query}' → web search")
+        print(f"[Fast-path] Knowledge question: '{prefix} {query}' -> web search")
         tool_result = core_tools.execute_tool("search_web", {"query": f"{prefix} {query}"})
 
         if "No web results" in tool_result or "failed" in tool_result.lower():
@@ -569,9 +758,30 @@ def generate_response(prompt: str, tts_callback=None) -> str:
             fact_lines = "\n".join(f"  - {f['fact']}" for f in facts)
             facts_section = f"\nKNOWN FACTS ABOUT MASTER {USER_NAME}:\n{fact_lines}"
 
+        # Inject Knowledge Graph connections
+        kg_section = ""
+        try:
+            import knowledge_graph
+            kg_info = knowledge_graph.query_knowledge_summary(prompt)
+            if kg_info:
+                kg_section = f"\n{kg_info}"
+        except Exception:
+            pass
+
+        # Inject Mood Tone Adaptation
+        mood_instruction = ""
+        try:
+            import mood_engine
+            mood_instruction = mood_engine.get_mood_prompt_modifier()
+        except Exception:
+            pass
+
         client, model_name = shared.get_brain()
+        persona = persona_engine.get_active_persona()
         
-        chat_system = f"""You are Alfred, an AI software assistant with a British butler persona running on Master {USER_NAME}'s computer. You are powered by the {model_name} model running 100% offline via Ollama. You cannot perform physical tasks.
+        chat_system = f"""{persona.personality_prompt} You are powered by the {model_name} model via the Groq API. You cannot perform physical tasks.
+
+{mood_instruction}
 
 CRITICAL ANTI-HALLUCINATION RULES:
 1. You must NEVER fabricate, guess, or hallucinate information. No imaginary replies.
@@ -580,26 +790,25 @@ CRITICAL ANTI-HALLUCINATION RULES:
 4. Master {USER_NAME} lives in {os.getenv("ALFRED_USER_LOCATION", "an undisclosed location")}.
 5. If the user appears to be talking to someone else in the background, or says something completely random that isn't directed at you, reply with EXACTLY the word "[IGNORE]". Do not say anything else.
 6. Answer factually and EXTREMELY CONCISELY (1 to 2 short sentences max). Short responses are required to make your voice load faster.
-7. You must prepend your response with an emotional mood tag reflecting the context: [MOOD: happy], [MOOD: sad], [MOOD: alert], [MOOD: calm], [MOOD: angry], or [MOOD: thinking].{facts_section}{memory_section}"""
+7. You must prepend your response with an emotional mood tag reflecting the context: [MOOD: happy], [MOOD: sad], [MOOD: alert], [MOOD: calm], [MOOD: angry], or [MOOD: thinking].{facts_section}{memory_section}{kg_section}"""
         messages = [{'role': 'system', 'content': chat_system}] + _conversation_history[-4:]
 
         try:
-            response = client.chat(
+            response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                keep_alive='1h',
                 stream=True,
-                options={
-                    'num_ctx': 512,       
-                    'num_predict': 100,    # Increased so sentence finishes
-                    'temperature': 0.1,    # Kept low to prevent hallucinations
-                }
+                temperature=0.1,    # Kept low to prevent hallucinations
+                max_tokens=100      # Increased so sentence finishes
             )
             
             speech = ""
             sentence_buffer = ""
             for chunk in response:
-                token = chunk['message']['content']
+                if chunk.choices and chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                else:
+                    continue
                 speech += token
                 sentence_buffer += token
                 
@@ -651,6 +860,22 @@ CRITICAL ANTI-HALLUCINATION RULES:
         
         return speech
 
+    # ── PATH 2.5: MULTI-TASK ORCHESTRATOR (compound requests) ──
+    try:
+        import task_orchestrator
+        orchestrator_result = task_orchestrator.orchestrate(prompt, tts_callback=tts_callback)
+        if orchestrator_result is not None:
+            # Orchestrator handled the compound request
+            _conversation_history.append({'role': 'user', 'content': prompt})
+            _conversation_history.append({'role': 'assistant', 'content': orchestrator_result})
+            memory_engine.save_conversation_turn('user', prompt)
+            memory_engine.save_conversation_turn('assistant', orchestrator_result)
+            print(f"\n[Alfred says]: {orchestrator_result}  ({time.time()-t0:.1f}s)")
+            _auto_save_memory(prompt, orchestrator_result)
+            return orchestrator_result
+    except Exception as e:
+        print(f"[Orchestrator] Error: {e}, falling through to standard agent path.")
+
     # ── PATH 3: MULTI-AGENT ORCHESTRATION PATH ──
     print("[Manager] Analyzing task to delegate...")
     
@@ -692,16 +917,10 @@ CRITICAL ANTI-HALLUCINATION RULES:
     while iteration < max_iterations:
         iteration += 1
         try:
-            response = client.chat(
-                model=model_name,
+            response = chat(
                 messages=messages,
                 format='json',
-                keep_alive='1h',
-                options={
-                    'num_ctx': 1024,      # Halved context to prevent VRAM spillover on 4GB cards
-                    'num_predict': 300,   # Increased to prevent JSON cutoff
-                    'temperature': 0,
-                }
+                options={'temperature': 0}
             )
 
             content = response['message']['content'].strip()

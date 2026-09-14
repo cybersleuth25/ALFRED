@@ -61,9 +61,11 @@ except Exception as e:
 import speech_recognition as sr
 
 recognizer = sr.Recognizer()
-recognizer.pause_threshold = 2.0
-recognizer.non_speaking_duration = 1.0
+recognizer.pause_threshold = 1.4           # How long of silence = end of phrase (was 2.5s)
+recognizer.non_speaking_duration = 0.6    # Min silence to consider phrase ended (was 1.2s)
 recognizer.dynamic_energy_threshold = True
+recognizer.energy_threshold = 200         # Lowered for better mic sensitivity (was 300)
+recognizer.operation_timeout = None       # Don't time out mid-recognition
 
 try:
     mic = sr.Microphone()
@@ -79,12 +81,18 @@ WAKE_WORD = "alfred"
 WAKE_SYNONYMS = [
     "alfred", "alford", "elfred", "alpha red", "all fred", "al fred",
     "albert", "elf red", "wake up", "hey alfred",
+    "alfie", "alfy", "alfread", "off red", "hal fred",   # extra fuzzy variants
+    "all right", "alfred please", "yo alfred",
+    "friday", "hey friday", "fry day", "fri day",        # Friday persona
+    "jarvis", "hey jarvis", "jar vis", "tarvis",         # Jarvis persona
 ]
 # Interrupt-only synonyms: these will stop Alfred mid-speech but do NOT wake him from sleep
 INTERRUPT_SYNONYMS = WAKE_SYNONYMS + [
     "buddy", "body", "but he", "but the",  # Common mis-transcriptions of "buddy"
+    "stop", "enough", "shut up",           # Emergency interrupt words
 ]
-OMEGA_SYNONYMS = [
+FOCUS_SYNONYMS = [
+    "begin focus mode", "focus mode", "start focus mode",
     "begin protocol omega", "protocol omega", "mega protocol", "omegaprotocol",
 ]
 
@@ -101,8 +109,8 @@ def listen_for_wake_word() -> bool:
     """
     # Choose which wake words to listen for
     if shared.focus_mode_active:
-        synonyms = OMEGA_SYNONYMS
-        prompt = "[FOCUS MODE - Waiting for 'Protocol Omega'...]"
+        synonyms = FOCUS_SYNONYMS
+        prompt = "[FOCUS MODE - Waiting for 'Focus Mode'...]"
     else:
         synonyms = WAKE_SYNONYMS
         prompt = "[Listening for 'Alfred'...]"
@@ -117,6 +125,8 @@ def listen_for_wake_word() -> bool:
 
 def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
     """Uses Vosk offline model for wake word detection. Very noise-resistant."""
+    pa = None
+    stream = None
     try:
         pa = pyaudio.PyAudio()
         
@@ -146,15 +156,13 @@ def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
             return dot_product / (magnitude1 * magnitude2)
 
         # Listen in a loop — each iteration processes ~250ms of audio
-        max_iterations = 40  # ~10 seconds before recycling (to keep responsive)
+        # 200 iterations = ~50 seconds before recycling (prevents dead zones)
+        max_iterations = 200
         for _ in range(max_iterations):
             # Check for Facial Auto-Wake
             if getattr(shared, "force_wake", False):
                 shared.force_wake = False
                 print("\n[Auto-Wake Triggered by Facial Recognition]")
-                stream.stop_stream()
-                stream.close()
-                pa.terminate()
                 return True
 
             # Don't listen while Alfred is speaking (prevents self-trigger)
@@ -185,18 +193,8 @@ def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
                                 continue
 
                         print(f"\n[Wake word detected!] (Vosk: '{text}')")
-                        stream.stop_stream()
-                        stream.close()
-                        pa.terminate()
                         return True
                     
-                    # Allow voice exit
-                    if "quit" in text or "exit" in text or "shut down" in text:
-                        print("\n[System] Shutting down via voice command.")
-                        stream.stop_stream()
-                        stream.close()
-                        pa.terminate()
-                        sys.exit(0)
             else:
                 # Partial result — check these too for faster response
                 partial = json.loads(rec.PartialResult())
@@ -205,19 +203,25 @@ def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
                     # Quick check on partial for faster wake detection
                     if any(word in partial_text for word in synonyms):
                         print(f"\n[Wake word detected!] (Vosk partial: '{partial_text}')")
-                        stream.stop_stream()
-                        stream.close()
-                        pa.terminate()
                         return True
 
-        stream.stop_stream()
-        stream.close()
-        pa.terminate()
         return False
 
     except Exception as e:
         print(f"[STT] Vosk wake error: {e}")
         return False
+    finally:
+        if stream:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+        if pa:
+            try:
+                pa.terminate()
+            except Exception:
+                pass
 
 
 def _google_listen_for_wake(synonyms: list, prompt: str) -> bool:
@@ -238,9 +242,7 @@ def _google_listen_for_wake(synonyms: list, prompt: str) -> bool:
                 print(f"\n[Wake word detected!]")
                 return True
 
-            if "quit" in text or "exit" in text or "shut down" in text:
-                print("\n[System] Shutting down via voice command.")
-                sys.exit(0)
+            # (Removed aggressive voice exit from background listener)
 
         except sr.WaitTimeoutError:
             pass
@@ -260,10 +262,25 @@ def listen_for_command() -> str:
     if not mic:
         return ""
 
+    # Wait for Alfred to finish speaking before listening (prevents self-echo
+    # from bleeding into the mic and miscalibrating the noise floor)
+    _wait_start = time.time()
+    while voice_engine.is_speaking():
+        time.sleep(0.1)
+        if time.time() - _wait_start > 10:  # Safety timeout
+            break
+    # Brief pause after speech ends to let audio reverb die down
+    time.sleep(0.15)
+
     with mic as source:
         print("\n[Alfred is listening...]")
+        # Ambient noise recalibration before each command (catches drift)
         try:
-            audio = recognizer.listen(source, timeout=5, phrase_time_limit=30)
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        except Exception:
+            pass
+        try:
+            audio = recognizer.listen(source, timeout=15, phrase_time_limit=18)
             text = recognizer.recognize_google(audio)
             print(f"You (Voice): {text}")
             return text
@@ -274,5 +291,21 @@ def listen_for_command() -> str:
             print("[Alfred couldn't understand...]")
             return ""
         except sr.RequestError as e:
-            print(f"[Error fetching STT results]: {e}")
+            print(f"[STT Error] Google STT failed (possibly offline): {e}")
+            if _vosk_available and _vosk_model:
+                print("[STT] Falling back to offline Vosk transcription...")
+                try:
+                    # Convert audio to Vosk format (16kHz, 1 channel, 16-bit PCM)
+                    raw_data = audio.get_raw_data(convert_rate=16000, convert_width=2)
+                    from vosk import KaldiRecognizer
+                    import json
+                    rec = KaldiRecognizer(_vosk_model, 16000)
+                    rec.AcceptWaveform(raw_data)
+                    result = json.loads(rec.Result())
+                    text = result.get("text", "").strip()
+                    if text:
+                        print(f"You (Voice - Offline Fallback): {text}")
+                        return text
+                except Exception as ex:
+                    print(f"[STT] Offline fallback failed: {ex}")
             return ""
