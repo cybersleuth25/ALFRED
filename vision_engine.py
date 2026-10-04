@@ -35,9 +35,41 @@ try:
     UNIFACE_AVAILABLE = True
     print("[Vision Engine] UniFace FaceAnalyzer initialized.")
 except ImportError:
-    print("[Vision Engine] uniface not installed. Run: pip install uniface[cpu]")
+    print("[Vision Engine] uniface not installed. UniFace facial emotion features disabled.")
 except Exception as e:
     print(f"[Vision Engine] UniFace init failed: {e}")
+
+# ── YOLOv8 Tracking Setup ──
+YOLO_AVAILABLE = False
+yolo_model = None
+try:
+    from ultralytics import YOLO
+    _yolo_path = os.path.join(os.path.dirname(__file__), "yolov8n.pt")
+    if os.path.exists(_yolo_path):
+        yolo_model = YOLO(_yolo_path)
+    else:
+        yolo_model = YOLO("yolov8n.pt")
+    YOLO_AVAILABLE = True
+    print("[Vision Engine] YOLOv8 tracking loaded.")
+except ImportError:
+    print("[Vision Engine] ultralytics not installed. Tracking fallback active.")
+except Exception as e:
+    print(f"[Vision Engine] YOLOv8 init failed: {e}")
+
+# ── Subject & Object Persistence ──
+_tracked_subjects = {}  # {track_id: {"id": int, "first_seen": float, "last_seen": float, "dwell_seconds": int, "bbox": tuple, "active": bool}}
+
+def _format_dwell(seconds: int) -> str:
+    """Format seconds into readable dwell time (e.g., '14m 20s')."""
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    sec = seconds % 60
+    if minutes < 60:
+        return f"{minutes}m {sec:02d}s"
+    hours = minutes // 60
+    min_rem = minutes % 60
+    return f"{hours}h {min_rem:02d}m"
 
 # ── MediaPipe Hand Gesture Setup ──
 MEDIAPIPE_AVAILABLE = False
@@ -221,13 +253,13 @@ def _vision_loop():
     """Main vision processing loop — runs as a daemon thread."""
     global _running, _person_was_detected, _hidden_mode, _hidden_start_time
     global _hidden_duration, _last_bbox, _last_speed, _prev_center
-    global _threat_score, _snapshot_cooldown, _gesture_cooldown
+    global _threat_score, _snapshot_cooldown, _gesture_cooldown, _tracked_subjects
 
-    if not UNIFACE_AVAILABLE:
-        print("[Vision Engine] Cannot start — UniFace not available.")
+    if not UNIFACE_AVAILABLE and not YOLO_AVAILABLE:
+        print("[Vision Engine] Cannot start — neither UniFace nor YOLOv8 available.")
         return
 
-    print("[Vision Engine] Sentry Mode ACTIVE. Monitoring for intruders and emotions.")
+    print("[Vision Engine] Sentry Mode ACTIVE with ByteTrack Object Persistence.")
 
     _emotion_cooldown = 0
 
@@ -239,45 +271,110 @@ def _vision_loop():
             continue
 
         frame_h, frame_w = frame.shape[:2]
-
-        # ── UniFace Person/Face Detection, Tracking & Emotion ──
-        try:
-            faces = uniface_analyzer.analyze(frame)
-        except Exception as e:
-            print(f"[Vision Engine] UniFace analysis error: {e}")
-            faces = []
-            
+        now = time.time()
         persons = []
         tracked_ids = []
-        
-        for face in faces:
-            x1, y1, x2, y2 = map(int, face.bbox)
-            persons.append((x1, y1, x2, y2))
-            
-            # Update face coordinates for the frontend orb (using the first/primary face)
-            if len(persons) == 1:
-                shared.face_x = ((x1 + x2) / 2) / frame_w
-                shared.face_y = ((y1 + y2) / 2) / frame_h
-            
-            # Use tracker_id if available (UniFace includes ByteTrack by default usually, if configured, or just provides IDs)
-            if hasattr(face, 'tracker_id') and face.tracker_id is not None:
-                tracked_ids.append(face.tracker_id)
-                
-            # Grab emotion & log to mood engine
-            if hasattr(face, 'emotion') and face.emotion is not None:
-                _emotion_cooldown = max(0, _emotion_cooldown - 1)
-                if _emotion_cooldown <= 0:
-                    if face.emotion != shared.dominant_emotion:
-                        shared.dominant_emotion = face.emotion
-                    try:
-                        import mood_engine
-                        mood_engine.log_mood_snapshot(face.emotion)
-                    except Exception:
-                        pass
-                    _emotion_cooldown = 10
 
-        shared.persons_detected = len(persons)
+        # ── 1. YOLOv8 Persistent Tracking (ByteTrack) ──
+        if YOLO_AVAILABLE and yolo_model is not None:
+            try:
+                # Track people (classes=[0]) with ByteTrack
+                results = yolo_model.track(
+                    frame,
+                    persist=True,
+                    classes=[0],
+                    tracker="bytetrack.yaml",
+                    conf=0.35,
+                    verbose=False
+                )
+                if results and len(results) > 0:
+                    boxes = results[0].boxes
+                    if boxes is not None and len(boxes) > 0:
+                        for box in boxes:
+                            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                            persons.append((x1, y1, x2, y2))
+                            
+                            t_id = int(box.id[0].item()) if box.id is not None else (len(persons))
+                            tracked_ids.append(t_id)
+
+                            # Subject persistence update
+                            if t_id not in _tracked_subjects:
+                                _tracked_subjects[t_id] = {
+                                    "id": t_id,
+                                    "first_seen": now,
+                                    "last_seen": now,
+                                    "dwell_seconds": 0,
+                                    "bbox": (x1, y1, x2, y2),
+                                    "active": True
+                                }
+                                shared.push_log(f"Subject #{t_id} entered camera field of view.", "VisionSentry")
+                            else:
+                                sub = _tracked_subjects[t_id]
+                                sub["last_seen"] = now
+                                sub["dwell_seconds"] = int(now - sub["first_seen"])
+                                sub["bbox"] = (x1, y1, x2, y2)
+                                if not sub["active"]:
+                                    sub["active"] = True
+                                    shared.push_log(f"Subject #{t_id} returned to desk.", "VisionSentry")
+            except Exception:
+                pass
+
+        # ── 2. UniFace Facial Analysis & Emotion (if available) ──
+        if UNIFACE_AVAILABLE and uniface_analyzer is not None:
+            try:
+                faces = uniface_analyzer.analyze(frame)
+                if not persons:
+                    for face in faces:
+                        x1, y1, x2, y2 = map(int, face.bbox)
+                        persons.append((x1, y1, x2, y2))
+                        if hasattr(face, 'tracker_id') and face.tracker_id is not None:
+                            tracked_ids.append(face.tracker_id)
+                
+                # Update face coordinates for the frontend orb
+                if faces:
+                    fx1, fy1, fx2, fy2 = map(int, faces[0].bbox)
+                    shared.face_x = ((fx1 + fx2) / 2) / frame_w
+                    shared.face_y = ((fy1 + fy2) / 2) / frame_h
+                    
+                    if hasattr(faces[0], 'emotion') and faces[0].emotion:
+                        _emotion_cooldown = max(0, _emotion_cooldown - 1)
+                        if _emotion_cooldown <= 0:
+                            if faces[0].emotion != shared.dominant_emotion:
+                                shared.dominant_emotion = faces[0].emotion
+                            try:
+                                import mood_engine
+                                mood_engine.log_mood_snapshot(faces[0].emotion)
+                            except Exception:
+                                pass
+                            _emotion_cooldown = 10
+            except Exception:
+                pass
+        elif persons:
+            # Fallback face/center coordinates from primary person bounding box
+            bx1, by1, bx2, by2 = persons[0]
+            shared.face_x = ((bx1 + bx2) / 2) / frame_w
+            shared.face_y = ((by1 + by2) / 2) / frame_h
+
+        # ── 3. Detect Inactive Subjects & Departures ──
+        for t_id, sub in list(_tracked_subjects.items()):
+            if sub["active"] and (now - sub["last_seen"] > 5.0):
+                sub["active"] = False
+                shared.push_log(f"Subject #{t_id} departed after {_format_dwell(sub['dwell_seconds'])}.", "VisionSentry")
+
+        # Compile active subjects list for shared state & UI
+        active_list = [
+            {
+                "id": sub["id"],
+                "dwell_seconds": sub["dwell_seconds"],
+                "dwell": _format_dwell(sub["dwell_seconds"]),
+                "active": sub["active"]
+            }
+            for sub in _tracked_subjects.values()
+            if sub["active"]
+        ]
+        shared.tracked_subjects_list = active_list
         shared.tracked_subjects = tracked_ids
+        shared.persons_detected = len(persons)
         person_detected_now = len(persons) > 0
 
         # ── Hidden Person Detection ──
@@ -370,8 +467,8 @@ def start_vision_daemon():
     if _running:
         print("[Vision Engine] Already running.")
         return
-    if not UNIFACE_AVAILABLE:
-        print("[Vision Engine] Cannot start — UniFace not available. Install: pip install uniface[cpu]")
+    if not UNIFACE_AVAILABLE and not YOLO_AVAILABLE:
+        print("[Vision Engine] Cannot start — Neither UniFace nor YOLOv8 available.")
         return
 
     _running = True
@@ -391,6 +488,8 @@ def stop_vision_daemon():
     shared.threat_level = "none"
     shared.threat_score = 0.0
     shared.persons_detected = 0
+    shared.tracked_subjects = 0
+    shared.tracked_subjects_list = []
     shared.hidden_mode = False
     shared.gesture_detected = ""
     shared.push_sentry_state()

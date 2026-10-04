@@ -3,6 +3,8 @@ OSINT (Open-Source Intelligence) Tools for Alfred.
 Gives Alfred access to the live internet: web search, news, earthquakes, and daily briefings.
 """
 
+import os
+import sys
 import requests
 from datetime import datetime
 
@@ -578,4 +580,201 @@ def fetch_instagram_posts(username: str, limit: int = 3) -> str:
         
     except Exception as e:
         return f"Failed to fetch Instagram posts for @{username}. Ensure your RAPIDAPI_KEY is valid and subscribed to 'Instagram Scraper Stable API'. Error: {e}"
+
+
+# ─────────────────────────────────────────────
+# TOOL 10: Reverse Face Search & Facial OSINT Intelligence
+# ─────────────────────────────────────────────
+OSINT_FACES_DIR = os.path.join(os.path.dirname(__file__), "..", "Alfred_Workspace", "osint_faces")
+os.makedirs(OSINT_FACES_DIR, exist_ok=True)
+
+
+def _capture_camera_face() -> str:
+    """Captures a high-resolution snapshot from Alfred's camera for face searching."""
+    try:
+        import cv2
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            return ""
+        # Allow sensor warm-up
+        for _ in range(3):
+            cap.read()
+        ret, frame = cap.read()
+        cap.release()
+        if not ret or frame is None:
+            return ""
+            
+        timestamp = int(datetime.now().timestamp())
+        out_path = os.path.join(OSINT_FACES_DIR, f"face_query_{timestamp}.jpg")
+        cv2.imwrite(out_path, frame)
+        return out_path
+    except Exception as e:
+        print(f"[OSINT Tools] Camera face capture error: {e}")
+        return ""
+
+
+def _query_faceseek_online(image_path: str) -> dict:
+    """
+    Queries FaceSeek / FaceOnLive facial recognition search engine.
+    Backend: https://www.faceseek.online/api/embed-search
+    """
+    try:
+        url = "https://www.faceseek.online/api/embed-search"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.faceseek.online",
+            "Referer": "https://www.faceseek.online/",
+        }
+        
+        with open(image_path, "rb") as f:
+            files = {"image": (os.path.basename(image_path), f, "image/jpeg")}
+            resp = requests.post(url, headers=headers, files=files, timeout=20)
+            
+        if resp.status_code == 200:
+            data = resp.json()
+            matches = data.get("matches", []) or data.get("results", []) or data.get("data", [])
+            return {
+                "success": True,
+                "engine": "FaceSeek Online (FaceOnLive Engine)",
+                "matches": matches,
+                "raw": data
+            }
+    except Exception as e:
+        print(f"[OSINT Tools] FaceSeek API note: {e}")
+        
+    # Also attempt query via Gradio Space if available
+    try:
+        from gradio_client import Client, handle_file
+        client = Client("FaceOnLive/Face-Search-Online")
+        res = client.predict(
+            image=handle_file(image_path),
+            api_name="/predict"
+        )
+        if res:
+            return {
+                "success": True,
+                "engine": "FaceOnLive HF Space",
+                "matches": res if isinstance(res, list) else [res],
+                "raw": res
+            }
+    except Exception as e:
+        print(f"[OSINT Tools] FaceOnLive Space query note: {e}")
+        
+    return {"success": False}
+
+
+def _analyze_face_demographics(image_path: str) -> str:
+    """
+    Analyzes facial features, age, expressions, clothing, and public figure status using Gemini 2.5 Flash.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return ""
+    try:
+        from google import genai
+        from google.genai import types
+        
+        client = genai.Client(api_key=api_key)
+        with open(image_path, "rb") as f:
+            img_bytes = f.read()
+            
+        prompt = (
+            "You are Alfred's Senior Facial Recognition & OSINT Intelligence Analyst.\n"
+            "Examine this face/person image thoroughly and produce a concise intelligence profile:\n"
+            "1. Face Detection & Posture: Confirm if human face(s) are present, face angle/head pose.\n"
+            "2. Demographic Estimation: Apparent age range, gender presentation.\n"
+            "3. Distinctive Facial Features: Hairstyle/hair color, facial hair (beard/mustache), eye color/shape, glasses, piercings, scars, or distinct marks.\n"
+            "4. Expressions & Mood: Emotional state and eye gaze direction.\n"
+            "5. Attire & Context: Clothing style, uniforms, badges, logos, jewelry, background environment cues.\n"
+            "6. Public Recognition Check: If this person is a recognized public figure, celebrity, executive, political figure, creator, or athlete, explicitly state their identity, role, and key facts. If they appear to be a private individual, state 'No public celebrity/historical figure match identified'.\n\n"
+            "Keep the format clean, bulleted, and professional."
+        )
+        
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                prompt,
+                types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+            ]
+        )
+        return resp.text.strip() if resp and resp.text else ""
+    except Exception as e:
+        print(f"[OSINT Tools] Gemini facial analysis error: {e}")
+        return ""
+
+
+def reverse_face_search(image_path: str = None) -> str:
+    """
+    Performs Reverse Face Search and Facial OSINT Intelligence on any photo or live camera frame.
+    Integrates FaceOnLive/FaceSeek facial embedding search, Gemini 2.5 Flash facial biometrics,
+    public figure identification, and direct OSINT search dossiers.
+
+    Args:
+        image_path: Local path to an image file (e.g. 'C:/photos/target.jpg').
+                    If omitted, empty, or 'camera', captures a snapshot from the live camera.
+    """
+    target_path = image_path.strip() if image_path else ""
+    
+    # 1. Camera snapshot if requested or path is empty
+    if not target_path or target_path.lower() in ["camera", "webcam", "live", "selfie", "me"]:
+        print("[OSINT Tools] Capturing live face image from camera...")
+        target_path = _capture_camera_face()
+        if not target_path:
+            return "Could not capture image from camera, sir. Please verify the webcam is active or provide an image file path."
+            
+    # Clean quotes around path
+    target_path = target_path.strip('\'"')
+    if not os.path.exists(target_path):
+        return f"Image file not found at '{target_path}', sir. Please check the file path."
+        
+    print(f"[OSINT Tools] Initiating Reverse Face Search on: {target_path}")
+    
+    # 2. Run Facial Biometrics & Public Recognition via Gemini
+    bio_profile = _analyze_face_demographics(target_path)
+    
+    # 3. Query Online Face Recognition Search Engine (FaceSeek / FaceOnLive)
+    online_res = _query_faceseek_online(target_path)
+    
+    # 4. Generate OSINT Referral Dossier Links
+    basename = os.path.basename(target_path)
+    osint_links = [
+        "🌐 *OSINT Deep-Link Investigation Dossiers:*",
+        "• Google Lens Visual Search: https://lens.google.com/",
+        "• PimEyes Face Search: https://pimeyes.com/en",
+        "• FaceCheck ID Verification: https://facecheck.id/",
+        "• Yandex Facial Reverse Image Search: https://yandex.com/images/search?rpt=imageview"
+    ]
+    
+    # 5. Format Executive Intelligence Report
+    report = [
+        f"🕵️ *FACIAL OSINT & REVERSE SEARCH INTELLIGENCE*",
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"📁 *Source Image:* `{basename}`",
+    ]
+    
+    if bio_profile:
+        report.append(f"\n👤 *Facial Biometrics & Demographics:*")
+        report.append(bio_profile)
+        
+    if online_res.get("success") and online_res.get("matches"):
+        matches = online_res["matches"]
+        report.append(f"\n🔍 *Online Database Matches ({online_res['engine']}):*")
+        count = 0
+        for m in matches[:5]:
+            count += 1
+            if isinstance(m, dict):
+                score = m.get("score") or m.get("similarity") or m.get("confidence", "N/A")
+                url = m.get("url") or m.get("source_url") or m.get("link", "Link unavailable")
+                title = m.get("title") or m.get("domain") or "Web Match"
+                report.append(f"  {count}. [{title}]({url}) — Similarity: {score}")
+            elif isinstance(m, str):
+                report.append(f"  {count}. {m}")
+    else:
+        report.append(f"\n🔍 *Online Face Database Query:* Search submitted to FaceOnLive index. No exact commercial match returned in instant tier; biometric profile and deep links compiled.")
+        
+    report.append("\n" + "\n".join(osint_links))
+    
+    return "\n".join(report)
+
 

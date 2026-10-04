@@ -109,6 +109,15 @@ def _get_pending_task_count() -> int:
         return 0
 
 
+def _get_calendar_summary() -> str:
+    """Fetches today's schedule from Google/Samsung Calendar if linked. Returns empty string otherwise."""
+    try:
+        from tools import calendar_tools
+        return calendar_tools.get_today_events_summary()
+    except Exception:
+        return ""
+
+
 BRIEFING_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Alfred_Workspace", "briefing_cache.json")
 
 def _is_offline() -> bool:
@@ -167,13 +176,15 @@ def generate_startup_briefing(user_name: str) -> str:
             
         task_count = _get_pending_task_count()
         batt_warning = _get_battery_warning()
+        calendar_summary = ""
     else:
         # Gather Data in parallel (cuts ~15s sequential → ~5s parallel)
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=5) as pool:
             weather_future = pool.submit(_get_weather_data)
             task_future = pool.submit(_get_pending_task_count)
             batt_future = pool.submit(_get_battery_warning)
             news_future = pool.submit(_get_top_headline)
+            calendar_future = pool.submit(_get_calendar_summary)
             
             try:
                 weather = weather_future.result(timeout=10)
@@ -191,6 +202,10 @@ def generate_startup_briefing(user_name: str) -> str:
                 headline = news_future.result(timeout=8)
             except Exception:
                 headline = ""
+            try:
+                calendar_summary = calendar_future.result(timeout=5)
+            except Exception:
+                calendar_summary = ""
 
         # Save successfully retrieved data to cache
         if weather or headline:
@@ -221,16 +236,22 @@ def generate_startup_briefing(user_name: str) -> str:
 
     # Construct strict prompt for the LLM
     data_points = f"- Current Time: {time_context}\n- Weather in {USER_CITY}: {temp}°C, {desc}{cached_note}. {rain_text}\n- Tasks: {task_text}\n"
+    if calendar_summary:
+        data_points += f"- Schedule: {calendar_summary}\n"
     if batt_warning:
         data_points += f"- Alert: {batt_warning}\n"
     if headline:
         data_points += f"- Top News: {headline}\n"
 
-    prompt = f"""You are Alfred, a highly sophisticated British AI butler. Generate a short, warm, and highly unique conversational greeting for Master {user_name}.
+    import persona_engine
+    persona = persona_engine.get_active_persona()
+    title = persona.get_title(user_name)
+
+    prompt = f"""{persona.personality_prompt} Generate a short, warm, and highly unique conversational greeting for {title}.
 You MUST seamlessly and naturally weave the following data into your greeting:
 {data_points}
 Rules:
-1. Do not use robotic bullet points. Speak in flowing, elegant paragraphs.
+1. Do not use robotic bullet points. Speak in your characteristic voice and style.
 2. Keep it under 3-4 sentences.
 3. Do not invent or hallucinate any facts outside of the provided data.
 4. End by asking how you can assist."""
@@ -244,5 +265,6 @@ Rules:
         return res['message']['content'].strip()
     except Exception as e:
         print(f"[Briefing Error] LLM generation failed, falling back to basic string: {e}")
-        # Fallback to basic robotic string if LLM fails
-        return f"Good {time_context}, Master {user_name}. It is {temp} degrees in {USER_CITY}. How may I assist you?"
+        # Fallback to basic string if LLM fails
+        return f"Good {time_context}, {title}. It is {temp} degrees in {USER_CITY}. How may I assist you?"
+

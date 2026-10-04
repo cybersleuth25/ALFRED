@@ -91,32 +91,67 @@ _ACTIVITY_RULES = {
     ],
 }
 
-# ── Proactive Intervention Lines ──
+# ── Proactive Intervention Generators (Persona & Language Adaptive) ──
 
-STUCK_LINES = [
-    f"Sir, you have been on this for quite some time. Shall I search for the error or help you debug?",
-    f"Master {USER_NAME}, I have noticed you have been staring at the same content for a while. Can I assist?",
-    f"Pardon the observation, sir, but you appear to be stuck. Would you like me to research the issue?",
-    f"You have been on this screen for over 10 minutes, sir. Sometimes a fresh perspective helps. Shall I look into it?",
-]
+def get_stuck_message() -> str:
+    """Generates context-aware, persona-aligned assistance offer when user is stuck."""
+    try:
+        import persona_engine
+        persona = persona_engine.get_active_persona()
+        h = persona.honorific
+    except Exception:
+        h = "sir"
+    options = [
+        f"{h.capitalize()}, you have been on this same code for quite some time. Would you like me to inspect your screen and debug?",
+        f"{h.capitalize()}, I notice you've been working on the same screen for over 10 minutes. Say 'screen dekho' or 'look at my screen' if you need assistance.",
+        f"Pardon the observation, {h}, but you seem stuck on this error. Shall I analyze the traceback for you?",
+        f"{h.capitalize()}, whenever you are ready, say 'check my screen' and I will review the code or error with you."
+    ]
+    return random.choice(options)
 
-BREAK_LINES = [
-    f"Master {USER_NAME}, you have been working continuously for over 90 minutes. I strongly recommend a short break.",
-    f"Sir, your dedication is admirable, but your brain needs rest. Please take a 5-minute break.",
-    f"Pardon the interruption, Master {USER_NAME}, but you have been at it for quite a while. A break would do you good.",
-    f"I suggest stepping away from the screen for a few minutes, sir. Sustained focus requires periodic rest.",
-]
 
-AWAY_PAUSE_LINES = [
-    f"You appear to have stepped away, sir. I have paused your study timer.",
-    f"I notice you have left your desk, Master {USER_NAME}. Timer paused until you return.",
-]
+def get_break_message() -> str:
+    """Generates gentle break reminder after long continuous sessions."""
+    try:
+        import persona_engine
+        persona = persona_engine.get_active_persona()
+        h = persona.honorific
+    except Exception:
+        h = "sir"
+    options = [
+        f"{h.capitalize()}, you have been working continuously for over 90 minutes. I strongly recommend resting your eyes for five minutes.",
+        f"{h.capitalize()}, prolonged focus requires periodic rest. A brief walk or stretch will recharge your productivity.",
+        f"Pardon the interruption, {h}, but sustained focus for an hour and a half is draining. Please take a short break.",
+    ]
+    return random.choice(options)
 
-RETURN_LINES = [
-    "Welcome back, sir. You were working on {activity} for {duration} minutes before stepping away.",
-    "Good to see you back, Master {USER_NAME}. You were {activity} before you left. Shall we continue?",
-    "You have returned, sir. You stepped away for {away_minutes} minutes. Your previous activity was {activity}.",
-]
+
+def get_away_pause_message() -> str:
+    """Spoken when pausing study timer after user steps away."""
+    try:
+        import persona_engine
+        persona = persona_engine.get_active_persona()
+        h = persona.honorific
+    except Exception:
+        h = "sir"
+    return f"You appear to have stepped away, {h}. I have paused your focus timer until you return."
+
+
+def get_return_message(activity_desc: str, duration_min: int, away_min: int) -> str:
+    """Generates warm, intelligent welcome-back message tailored to previous activity."""
+    try:
+        import persona_engine
+        persona = persona_engine.get_active_persona()
+        h = persona.honorific
+    except Exception:
+        h = "sir"
+    options = [
+        f"Welcome back, {h}. You were working on {activity_desc} for {duration_min} minutes before stepping away.",
+        f"Good to see you back, {h}. You were away for {away_min} minutes. Your {activity_desc} session is standing by.",
+        f"{h.capitalize()}, you have returned. Shall we resume where you left off with {activity_desc}?"
+    ]
+    return random.choice(options)
+
 
 # ── Thread Control ──
 _running = False
@@ -135,17 +170,30 @@ _away_pause_spoken = False
 def _safe_speak(message: str) -> bool:
     """Delegates to shared.safe_speak() — centralized TTS with state management."""
     try:
-        return shared.safe_speak(message, author="Alfred")
+        import persona_engine
+        persona = persona_engine.get_active_persona()
+        author_name = persona.display_name if persona else "Alfred"
+        return shared.safe_speak(message, author=author_name)
     except Exception as e:
         print(f"[Context Engine] TTS failed: {e}")
         return False
 
 
 def _can_intervene() -> bool:
-    """Checks if enough time has passed since the last proactive intervention."""
+    """
+    Checks if conditions allow a proactive intervention:
+    1. Cooldown must have elapsed.
+    2. Alfred must not be halted from the UI.
+    3. User must not be in a meeting/call (communication activity).
+    """
     global _last_intervention_time
     now = time.time()
     if now - _last_intervention_time < INTERVENTION_COOLDOWN:
+        return False
+    if getattr(shared, 'alfred_halted', False):
+        return False
+    if shared.context_current_activity == "communication":
+        # Never interrupt a video call or meeting
         return False
     return True
 
@@ -212,16 +260,22 @@ def _detect_presence() -> str:
 
 
 def _get_screen_hash() -> str:
-    """Gets the current screen's perceptual hash for change detection."""
+    """Gets the current screen's perceptual hash for change detection (<15ms via GDI)."""
     try:
-        from PIL import ImageGrab
+        import screen_copilot
         import imagehash
-        screenshot = ImageGrab.grab()
-        # Downscale for faster hashing
+        screenshot = screen_copilot.capture_screen_pil()
+        # Downscale for instant perceptual hashing
         screenshot = screenshot.resize((160, 90))
         return str(imagehash.average_hash(screenshot))
     except Exception:
-        return None
+        try:
+            from PIL import ImageGrab
+            import imagehash
+            screenshot = ImageGrab.grab().resize((160, 90))
+            return str(imagehash.average_hash(screenshot))
+        except Exception:
+            return None
 
 
 def get_context_summary() -> str:
@@ -345,7 +399,7 @@ def _context_loop():
                     if away_duration > AWAY_THRESHOLD and not _away_pause_spoken:
                         if shared.omega_active and shared.omega_phase == "focus":
                             if _can_intervene():
-                                _safe_speak(random.choice(AWAY_PAUSE_LINES))
+                                _safe_speak(get_away_pause_message())
                                 _mark_intervened()
                                 _away_pause_spoken = True
 
@@ -358,15 +412,10 @@ def _context_loop():
                     # Welcome back if they were away for >5 minutes
                     if away_duration > RETURN_GREETING_THRESHOLD:
                         if _can_intervene():
-                            away_min = int(away_duration / 60)
+                            away_min = max(1, int(away_duration / 60))
                             activity_desc = _last_activity if _last_activity != "idle" else "your previous task"
-                            duration_min = int((_away_start_time - _activity_start_time) / 60) if _activity_start_time > 0 else 0
-                            msg = random.choice(RETURN_LINES).format(
-                                activity=activity_desc,
-                                duration=duration_min,
-                                away_minutes=away_min,
-                                USER_NAME=USER_NAME
-                            )
+                            duration_min = max(1, int((_away_start_time - _activity_start_time) / 60)) if _activity_start_time > 0 else 0
+                            msg = get_return_message(activity_desc, duration_min, away_min)
                             _safe_speak(msg)
                             _mark_intervened()
 
@@ -375,7 +424,7 @@ def _context_loop():
             # 4a. Stuck Detection: Same screen for >STUCK_THRESHOLD while coding
             if (activity == "coding" and screen_stale_seconds > STUCK_THRESHOLD
                     and _can_intervene()):
-                _safe_speak(random.choice(STUCK_LINES))
+                _safe_speak(get_stuck_message())
                 _mark_intervened()
                 # Reset the hash timer so we don't re-trigger immediately
                 _screen_hash_unchanged_since = now
@@ -384,7 +433,7 @@ def _context_loop():
             if (activity_dwell > BREAK_THRESHOLD
                     and activity in ("coding", "studying", "browsing")
                     and _can_intervene()):
-                _safe_speak(random.choice(BREAK_LINES))
+                _safe_speak(get_break_message())
                 _mark_intervened()
 
             # ── 5. Periodic DB Snapshot ──

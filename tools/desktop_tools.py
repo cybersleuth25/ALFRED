@@ -71,37 +71,15 @@ def keyboard_hotkey(key1: str, key2: str = "", key3: str = "") -> str:
 
 def analyze_screen(query: str) -> str:
     """
-    Takes a live screenshot of the computer screen and uses Gemini 2.5 Flash to analyze it.
-    Use this to 'see' what is on the screen, read text, or find approximate coordinates of elements.
+    Takes a live screenshot using pure Win32 GDI BitBlt (<15ms) and uses Gemini 2.5 Flash
+    multimodal vision to inspect the screen with active foreground window context.
     """
     try:
-        from PIL import ImageGrab
-        from google import genai
-        
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return "Error: GEMINI_API_KEY is not set in .env."
-            
-        # Take a screenshot
-        screenshot = ImageGrab.grab()
-        
-        client = genai.Client(api_key=api_key)
-        
-        prompt = f"""
-        You are Alfred, examining a screenshot of the user's computer screen.
-        The screen resolution is {screenshot.width}x{screenshot.height}.
-        The user asks: "{query}"
-        
-        If the user is asking for the location of something, try to provide approximate (X, Y) pixel coordinates based on the resolution.
-        Be extremely concise and direct in your answer.
-        """
-        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[screenshot, prompt]
-        )
-        
-        return f"Screen Vision Analysis: {response.text}"
+        import screen_copilot
+        res = screen_copilot.analyze_screen(query)
+        if res.get("success"):
+            return res.get("analysis", "No visual output generated.")
+        return f"Screen vision failed: {res.get('analysis')}"
     except Exception as e:
         return f"Error analyzing screen: {e}"
 

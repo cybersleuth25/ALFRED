@@ -23,9 +23,10 @@ interface CommandCenterProps {
   active: boolean;
   focusState: FocusState | null;
   lockdown: boolean;
+  onClose?: () => void;
 }
 
-export default function CommandCenter({ active, focusState, lockdown }: CommandCenterProps) {
+export default function CommandCenter({ active, focusState, lockdown, onClose }: CommandCenterProps) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -51,6 +52,29 @@ export default function CommandCenter({ active, focusState, lockdown }: CommandC
 
       {/* Main grid container */}
       <div className="command-center-grid-wrapper">
+        {/* Tactical Dashboard Header */}
+        <div className="flex items-center justify-between mb-4 px-2">
+          <div className="flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
+            <span className="text-[11px] tracking-[0.25em] font-semibold text-white/70 uppercase">
+              Tactical Command Center
+            </span>
+            <span className="text-[9px] tracking-[0.15em] font-mono text-white/30 border border-white/10 px-2 py-0.5 rounded-full">
+              TELEMETRY V2.4
+            </span>
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1 text-[10px] tracking-[0.15em] font-mono text-white/60 hover:text-white bg-white/[0.04] hover:bg-white/[0.1] border border-white/10 hover:border-white/25 rounded-full transition-all duration-200 shadow-sm"
+              title="Close Tactical Command Center"
+            >
+              <span>✕</span>
+              <span>CLOSE</span>
+            </button>
+          )}
+        </div>
+
         <div className="bento-grid">
 
           {/* Weather — Spans 2 columns */}

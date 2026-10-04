@@ -22,11 +22,13 @@ import pyaudio
 import json
 import struct
 import sys
+import directed_speech_engine
 from datetime import datetime
 
 def _get_dynamic_greeting(user_name):
     hour = datetime.now().hour
-    title = random.choice([f"Master {user_name}", "sir", user_name])
+    persona = persona_engine.get_active_persona()
+    title = random.choice([persona.get_title(user_name), persona.honorific, user_name])
     
     if 1 <= hour < 5:
         return random.choice([
@@ -83,6 +85,7 @@ def _get_dynamic_greeting(user_name):
             f"The night is ours, {title}. Whatever you need, just say the word.",
         ])
 
+
 def main_loop():
     print("\n" + "="*50)
     print(" ALFRED IS ONLINE (VOICE MODE) ".center(50, "="))
@@ -98,6 +101,13 @@ def main_loop():
     routine_engine.init_default_routines()
     gesture_engine.init_default_gestures()
 
+    # Start Telegram mobile remote bot link (background daemon)
+    try:
+        import telegram_bot
+        threading.Thread(target=telegram_bot.start_telegram_bot_loop, daemon=True, name="TelegramBot").start()
+    except Exception as e:
+        print(f"[Telegram Bot] Could not initialize: {e}")
+
     # Pre-warm the LLM in background (eliminates cold-start on first command)
     if hasattr(llm_engine, 'prewarm_model'):
         threading.Thread(target=llm_engine.prewarm_model, daemon=True).start()
@@ -108,6 +118,7 @@ def main_loop():
 
     is_active_mode = False
     _has_given_briefing = False  # Only deliver full briefing on first wake
+    attentive_deadline = 0.0     # Dynamic conversational follow-up window
     _empty_cmd_streak = 0        # Count consecutive empty/unheard commands
 
     while True:
@@ -128,9 +139,19 @@ def main_loop():
                 if not wake_detected:
                     continue
                 
-                # He woke up! Enter active mode indefinitely
+                # He woke up! Check if specific persona was called
+                last_wake = getattr(shared, 'last_wake_phrase', '').lower()
+                if any(w in last_wake for w in ['friday', 'fry day', 'fri day']):
+                    persona_engine.switch_persona('friday')
+                elif any(w in last_wake for w in ['jarvis', 'tarvis']):
+                    persona_engine.switch_persona('jarvis')
+                elif any(w in last_wake for w in ['alfred', 'alford', 'elfred', 'alfie']):
+                    persona_engine.switch_persona('alfred')
+
+                persona = persona_engine.get_active_persona()
                 is_active_mode = True
                 shared.alfred_awake = True
+                attentive_deadline = time.time() + 15.0  # Initial 15s window to issue command
                 shared.push_state("speaking")
                 
                 # First wake: deliver full real intelligence briefing
@@ -138,7 +159,7 @@ def main_loop():
                 if not _has_given_briefing:
                     try:
                         briefing = briefing_engine.generate_startup_briefing(USER_NAME)
-                        shared.push_log(briefing, "Alfred")
+                        shared.push_log(briefing, persona.display_name)
                         shared.push_caption(briefing)
                         voice_engine.speak(briefing)
                         shared.push_caption("")
@@ -146,6 +167,7 @@ def main_loop():
                     except Exception as e:
                         print(f"[Briefing Error] {e}")
                         greeting = _get_dynamic_greeting(USER_NAME)
+                        shared.push_log(greeting, persona.display_name)
                         voice_engine.speak(greeting)
                         _has_given_briefing = True
                 else:
@@ -154,33 +176,85 @@ def main_loop():
                     ctx_summary = context_engine.get_context_summary()
                     if ctx_summary:
                         greeting += f" {ctx_summary}"
+                    shared.push_log(greeting, persona.display_name)
                     voice_engine.speak(greeting)
             
             # 2. Command listening phase: Capture the actual command
             shared.push_state("listening")
-            user_input = stt_engine.listen_for_command()
+            
+            # Check if user already uttered a command during speech playback (Full-Duplex Barge-In)
+            import barge_in_engine
+            user_input = ""
+            if barge_in_engine.was_interrupted():
+                interrupted_phrase = barge_in_engine.get_last_interruption_phrase()
+                pure_stop_words = {'stop', 'wait', 'ruko', 'chup', 'quiet', 'shh', 'hold on', 'enough', '[voice energy cutoff]'}
+                if interrupted_phrase and interrupted_phrase.strip().lower() not in pure_stop_words and len(interrupted_phrase.split()) >= 2:
+                    if not voice_engine.is_self_echo(interrupted_phrase):
+                        user_input = interrupted_phrase
+                        attentive_deadline = time.time() + 15.0
+                        print(f"[Barge-In] Executing user's interrupt command directly: '{user_input}'")
+                    else:
+                        print(f"[Barge-In] Dropped self-echo interrupt: '{interrupted_phrase}'")
+
+            if not user_input:
+                user_input = stt_engine.listen_for_command()
             
             if not user_input.strip():
-                # In active mode, if he hears nothing, just loop back and keep listening
-                _empty_cmd_streak += 1
-                if _empty_cmd_streak >= 2:
-                    _empty_cmd_streak = 0
-                    shared.push_state("speaking")
-                    _nudge = random.choice([
-                        "I didn't quite catch that, sir. Could you repeat?",
-                        "Pardon, sir? I didn't hear you clearly.",
-                        "I'm listening, sir. Could you say that again?",
-                    ])
-                    voice_engine.speak(_nudge)
-                    shared.push_caption("")
+                # If conversational window has expired with no command, silently enter standby
+                if time.time() > attentive_deadline:
+                    is_active_mode = False
+                    shared.alfred_awake = False
+                    shared.push_state("idle")
+                    print("[Directed Speech] Attentive window expired. Returning to standby.")
                 continue
 
-            _empty_cmd_streak = 0  # Reset on successful command
+            if voice_engine.is_self_echo(user_input):
+                print(f"[Acoustic Echo Rejection] Dropped self-echo: '{user_input}'")
+                continue
+
+            # ── Intelligent Directed Speech Filter ──
+            # Distinguish user talking to JARVIS vs side conversation / phone call
+            is_directed, reason, conf = directed_speech_engine.is_speech_directed(user_input)
+            if not is_directed:
+                print(f"[Directed Speech] Ignored side-talk ({reason}, conf={conf:.2f}): '{user_input}'")
+                # Do NOT push to chat or UI log. Stay completely silent!
+                if time.time() > attentive_deadline:
+                    is_active_mode = False
+                    shared.alfred_awake = False
+                    shared.push_state("idle")
+                continue
+
+            # Speech is confirmed directed to assistant: Refresh conversational window
+            attentive_deadline = time.time() + 15.0
 
             shared.push_log(user_input, "User")
             shared.push_caption(user_input)
 
+            # Direct persona address (e.g., "Friday, what time is it?" or "Hey Jarvis, search the web")
+            addressed_target, remaining_cmd = persona_engine.check_direct_address(user_input)
+            if addressed_target:
+                current_p = persona_engine.get_active_persona()
+                if addressed_target != current_p.name:
+                    persona_engine.switch_persona(addressed_target)
+                if not remaining_cmd.strip():
+                    p = persona_engine.get_active_persona()
+                    shared.push_state("speaking")
+                    if addressed_target == 'friday':
+                        reply = f"Hey {p.honorific}, what's the plan?"
+                    elif addressed_target == 'jarvis':
+                        reply = f"At your service, {p.honorific}."
+                    else:
+                        reply = f"Alfred here, {p.get_title(USER_NAME)}."
+                    shared.push_log(reply, p.display_name)
+                    voice_engine.speak(reply)
+                    shared.push_caption("")
+                    attentive_deadline = time.time() + directed_speech_engine.ATTENTIVE_WINDOW_SECONDS
+                    continue
+                else:
+                    user_input = remaining_cmd
+
             ui_lower = user_input.lower()
+
 
             # -- FOCUS MODE (Study Mentor) --
             # Check DEACTIVATE first (because "stop study mode" contains "study mode")
@@ -263,21 +337,29 @@ def main_loop():
                 continue
 
             # -- PERSONA SWITCHING --
-            if any(phrase in ui_lower for phrase in commands.PERSONA_SWITCH):
+            if any(phrase in ui_lower for phrase in commands.PERSONA_SWITCH) or persona_engine.extract_persona_name(ui_lower):
                 target = persona_engine.extract_persona_name(ui_lower)
                 if target:
-                    result = persona_engine.switch_persona(target)
+                    persona_engine.switch_persona(target)
                     persona = persona_engine.get_active_persona()
                     shared.push_state("speaking")
-                    shared.push_log(result, "Alfred")
-                    voice_engine.speak(f"Persona switched. I am now {persona.display_name}. At your service, {persona.honorific}.")
+                    if target == 'friday':
+                        reply = f"F.R.I.D.A.Y. online and ready. What's the plan, {persona.honorific}?"
+                    elif target == 'jarvis':
+                        reply = f"J.A.R.V.I.S. operational. At your service, {persona.honorific}."
+                    else:
+                        reply = f"Alfred at your command, {persona.get_title(USER_NAME)}."
+                    shared.push_log(reply, persona.display_name)
+                    voice_engine.speak(reply)
                     shared.push_caption("")
                 else:
                     available = ", ".join(persona_engine.get_persona_names())
+                    persona = persona_engine.get_active_persona()
                     shared.push_state("speaking")
-                    voice_engine.speak(f"Which persona would you like, {persona_engine.get_active_persona().honorific}? Available: {available}.")
+                    voice_engine.speak(f"Which persona would you like, {persona.honorific}? Available: {available}.")
                     shared.push_caption("")
                 continue
+
 
             # -- SENTRY MODE (Vision Engine) --
             if any(phrase in ui_lower for phrase in commands.SENTRY_DEACTIVATE):
@@ -304,6 +386,86 @@ def main_loop():
                     shared.push_caption("")
                 continue
 
+            # -- SCREEN CO-PILOT --
+            if any(phrase in ui_lower for phrase in commands.SCREEN_COPILOT_TRIGGERS):
+                import screen_copilot
+                persona = persona_engine.get_active_persona()
+                shared.push_state("speaking")
+                _ack = f"Inspecting your screen now, {persona.honorific}."
+                shared.push_log(_ack, persona.display_name)
+                voice_engine.speak(_ack)
+                shared.push_state("processing")
+                res = screen_copilot.analyze_screen(user_input)
+                shared.push_state("speaking")
+                shared.push_log(res["analysis"], persona.display_name)
+                shared.push_caption(res["analysis"])
+                voice_engine.speak(res["analysis"])
+                shared.push_caption("")
+                continue
+
+            # -- MEDIA CONTROLS (INSTANT HARDWARE DISPATCH) --
+            if any(phrase in ui_lower for phrase in commands.MEDIA_PLAY_PAUSE):
+                import media_control
+                persona = persona_engine.get_active_persona()
+                res = media_control.play_pause()
+                shared.push_log(f"Media: {res}", persona.display_name)
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.MEDIA_NEXT):
+                import media_control
+                persona = persona_engine.get_active_persona()
+                res = media_control.next_track()
+                shared.push_log(f"Media: {res}", persona.display_name)
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.MEDIA_PREV):
+                import media_control
+                persona = persona_engine.get_active_persona()
+                res = media_control.previous_track()
+                shared.push_log(f"Media: {res}", persona.display_name)
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.MEDIA_MUTE):
+                import media_control
+                persona = persona_engine.get_active_persona()
+                res = media_control.toggle_mute()
+                shared.push_log(f"Media: {res}", persona.display_name)
+                continue
+
+            # -- ACOUSTIC SENTRY EAR --
+            if any(phrase in ui_lower for phrase in commands.ACOUSTIC_SENTRY_DEACTIVATE):
+                import acoustic_engine
+                acoustic_engine.stop_acoustic_daemon()
+                persona = persona_engine.get_active_persona()
+                shared.push_state("speaking")
+                msg = f"Acoustic perimeter ear disarmed, {persona.honorific}."
+                shared.push_log(msg, persona.display_name)
+                voice_engine.speak(msg)
+                shared.push_caption("")
+                continue
+
+            if any(phrase in ui_lower for phrase in commands.ACOUSTIC_SENTRY_ACTIVATE):
+                import acoustic_engine
+                acoustic_engine.start_acoustic_daemon()
+                persona = persona_engine.get_active_persona()
+                shared.push_state("speaking")
+                msg = f"Acoustic sentry ear armed, {persona.honorific}. Monitoring ambient acoustics for anomalies."
+                shared.push_log(msg, persona.display_name)
+                voice_engine.speak(msg)
+                shared.push_caption("")
+                continue
+
+            # -- EVENING EXECUTIVE DEBRIEF --
+            if any(phrase in ui_lower for phrase in commands.DEBRIEF_TRIGGERS):
+                import debrief_engine
+                persona = persona_engine.get_active_persona()
+                shared.push_state("speaking")
+                _ack = f"Synthesizing your executive debrief for today, {persona.honorific}."
+                shared.push_log(_ack, persona.display_name)
+                voice_engine.speak(_ack)
+                debrief_engine.generate_executive_debrief(speak=True)
+                continue
+
             # Dismissal logic
             if any(phrase in ui_lower for phrase in commands.STANDBY_PHRASES):
                 # If Focus Mode is active, deactivate it too
@@ -312,6 +474,12 @@ def main_loop():
                 # If Sentry Mode is active, deactivate it too
                 if vision_engine.is_active():
                     vision_engine.stop_vision_daemon()
+                try:
+                    import acoustic_engine
+                    if acoustic_engine.is_active():
+                        acoustic_engine.stop_acoustic_daemon()
+                except Exception:
+                    pass
                 is_active_mode = False
                 shared.alfred_awake = False
                 shared.push_log("Entering sleep mode.", "System")
@@ -393,12 +561,13 @@ def main_loop():
                 _is_done_speaking[0] = True
                 
             def _monitor_wake_word_for_interrupt():
-                """Monitor mic using Vosk for wake-word/direct-address detection.
+                """Lightweight interrupt watcher.
                 
-                Smart interrupt logic:
-                - Wake words ("Alfred", "stop", "buddy") → immediate interrupt
-                - Direct address (speech containing Alfred's name) → interrupt + capture text
-                - The captured text is saved so the main loop can use it as the next command
+                The barge_in_engine (started inside voice_engine.speak_streamed)
+                already handles keyword-based interrupts with self-echo guards.
+                Opening a second mic stream here would compete for the audio device,
+                so this monitor simply waits for speech to end or for the barge-in
+                engine to flag an interruption.
                 """
                 # Wait for playback to actually begin
                 for _ in range(50):
@@ -406,136 +575,22 @@ def main_loop():
                         break
                     time.sleep(0.1)
                 
-                if not voice_engine.is_speaking():
-                    return
-                
-                # Try Vosk-based interrupt (accurate, wake-word based)
-                if stt_engine._vosk_available and stt_engine._vosk_model:
-                    pa = None
-                    stream = None
-                    try:
-                        from vosk import KaldiRecognizer
-                        pa = pyaudio.PyAudio()
-                        
-                        stream = pa.open(
-                            format=pyaudio.paInt16,
-                            channels=1,
-                            rate=stt_engine.VOSK_RATE,
-                            input=True,
-                            frames_per_buffer=stt_engine.VOSK_CHUNK,
-                        )
-                        
-                        rec = KaldiRecognizer(stt_engine._vosk_model, stt_engine.VOSK_RATE)
-                        rec.SetWords(False)
-                        
-                        print("[Interrupt monitor] Vosk smart detection active during speech")
-                        
-                        while not _is_done_speaking[0]:
-                            if not voice_engine.is_speaking():
-                                time.sleep(0.05)
-                                continue
-                            
-                            data = stream.read(stt_engine.VOSK_CHUNK, exception_on_overflow=False)
-                            
-                            if rec.AcceptWaveform(data):
-                                result = json.loads(rec.Result())
-                                text = result.get("text", "").lower().strip()
-                                if not text:
-                                    continue
-                                
-                                # Check for direct address (wake words or interrupt words)
-                                if any(word in text for word in stt_engine.INTERRUPT_SYNONYMS):
-                                    print(f"\n[Interrupt!] Direct address detected: '{text}'")
-                                    voice_engine.stop_speaking()
-                                    _was_interrupted[0] = True
-                                    # Capture the full text minus the wake word for use as next command
-                                    remaining = text
-                                    for word in stt_engine.INTERRUPT_SYNONYMS:
-                                        remaining = remaining.replace(word, "").strip()
-                                    if len(remaining.split()) >= 2:
-                                        _interrupted_text[0] = remaining
-                                    break
-                            else:
-                                partial = json.loads(rec.PartialResult())
-                                partial_text = partial.get("partial", "").lower().strip()
-                                if partial_text and any(word in partial_text for word in stt_engine.INTERRUPT_SYNONYMS):
-                                    print(f"\n[Interrupt!] Wake word detected (partial): '{partial_text}'")
-                                    voice_engine.stop_speaking()
-                                    _was_interrupted[0] = True
-                                    break
-                    except Exception as e:
-                        print(f"[Interrupt monitor error]: {e}")
-                    finally:
-                        if stream:
-                            try:
-                                stream.stop_stream()
-                                stream.close()
-                            except Exception:
-                                pass
-                        if pa:
-                            try:
-                                pa.terminate()
-                            except Exception:
-                                pass
-                else:
-                    # Fallback: volume-based interrupt if Vosk is unavailable
-                    # Thresholds lowered for more natural interruption
-                    pa = None
-                    stream = None
-                    try:
-                        pa = pyaudio.PyAudio()
-                        dev_info = pa.get_default_input_device_info()
-                        channels = min(int(dev_info['maxInputChannels']), 2)
-                        rate = int(dev_info['defaultSampleRate'])
-                        chunk = 2048
-                        
-                        stream = pa.open(
-                            format=pyaudio.paInt16,
-                            channels=channels,
-                            rate=rate,
-                            input=True,
-                            frames_per_buffer=chunk
-                        )
-                        
-                        print(f"[Interrupt monitor] Volume-based fallback active")
-                        
-                        baseline_samples = []
-                        for _ in range(8):
-                            if not voice_engine.is_speaking(): break
-                            data = stream.read(chunk, exception_on_overflow=False)
-                            samples = struct.unpack(f'<{len(data)//2}h', data)
-                            rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
-                            baseline_samples.append(rms)
-                        
-                        baseline = max(baseline_samples) if baseline_samples else 200
-                        threshold = max(baseline * 2.5, 6000)  # Lowered: was 4.0 / 16000
-                        
-                        while not _is_done_speaking[0]:
-                            if not voice_engine.is_speaking():
-                                time.sleep(0.05)
-                                continue
-                            data = stream.read(chunk, exception_on_overflow=False)
-                            samples = struct.unpack(f'<{len(data)//2}h', data)
-                            rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
-                            if rms > threshold:
-                                print(f"\n[Interrupt!] Voice spike detected (level: {rms:.0f})")
-                                voice_engine.stop_speaking()
-                                _was_interrupted[0] = True
-                                break
-                    except Exception as e:
-                        print(f"[Interrupt monitor error]: {e}")
-                    finally:
-                        if stream:
-                            try:
-                                stream.stop_stream()
-                                stream.close()
-                            except Exception:
-                                pass
-                        if pa:
-                            try:
-                                pa.terminate()
-                            except Exception:
-                                pass
+                # Poll until speech ends or barge-in interrupts it
+                import barge_in_engine
+                while not _is_done_speaking[0]:
+                    if barge_in_engine.was_interrupted():
+                        _was_interrupted[0] = True
+                        # Capture the interrupted phrase for potential reuse
+                        phrase = barge_in_engine.get_last_interruption_phrase()
+                        if phrase:
+                            # Strip pure stop keywords to extract any trailing command
+                            remaining = phrase
+                            for word in ['stop', 'wait', 'ruko', 'chup', 'alfred', 'jarvis', 'friday']:
+                                remaining = remaining.replace(word, '').strip()
+                            if len(remaining.split()) >= 2 and not voice_engine.is_self_echo(remaining):
+                                _interrupted_text[0] = remaining
+                        break
+                    time.sleep(0.1)
             
             speak_thread = threading.Thread(target=_speak_streamed, daemon=True)
             monitor_thread = threading.Thread(target=_monitor_wake_word_for_interrupt, daemon=True)
@@ -545,8 +600,9 @@ def main_loop():
             speak_thread.join()
             llm_thread.join()
             
-            # Finalize log
-            shared.push_log(alfred_text_container[0], "Alfred")
+            # Finalize log with active persona name
+            p = persona_engine.get_active_persona()
+            shared.push_log(alfred_text_container[0], p.display_name)
             
             # Clear caption
             shared.push_caption("")
@@ -559,7 +615,12 @@ def main_loop():
                 # If we captured speech during the interrupt, use it as the next command
                 if _interrupted_text[0]:
                     captured = _interrupted_text[0]
-                    print(f"[System] Alfred interrupted. Captured command: '{captured}'")
+                    # Final safety: reject self-echo before sending to LLM
+                    if voice_engine.is_self_echo(captured):
+                        print(f"[Interrupt] Dropped self-echo captured text: '{captured}'")
+                        captured = ""
+                if _interrupted_text[0] and captured:
+                    print(f"[System] Assistant interrupted. Captured command: '{captured}'")
                     shared.push_log(captured, "User")
                     shared.push_caption(captured)
                     
@@ -588,16 +649,21 @@ def main_loop():
                         voice_engine.speak_streamed(sentence_queue_2, first_chunk_2)
                     
                     llm_thread_2.join()
-                    shared.push_log(alfred_text_2[0], "Alfred")
+                    p_active = persona_engine.get_active_persona()
+                    shared.push_log(alfred_text_2[0], p_active.display_name)
                     shared.push_caption("")
+                    attentive_deadline = time.time() + directed_speech_engine.ATTENTIVE_WINDOW_SECONDS
                 else:
-                    print("[System] Alfred was interrupted. Listening for new command...")
+                    print("[System] Assistant was interrupted. Listening for new command...")
+                    attentive_deadline = time.time() + directed_speech_engine.ATTENTIVE_WINDOW_SECONDS
                     # Fall through — the loop will continue and listen for their command
 
         except KeyboardInterrupt:
+            p_active = persona_engine.get_active_persona()
             shared.push_log("Shutting down by KeyboardInterrupt.", "System")
-            voice_engine.speak(f"Goodbye, Master {USER_NAME}.")
+            voice_engine.speak(f"Goodbye, {p_active.get_title(USER_NAME)}.")
             sys.exit(0)
+
 
         except Exception as e:
             print(f"\n[Error]: {e}")

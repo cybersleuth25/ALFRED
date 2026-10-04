@@ -174,6 +174,47 @@ class SearcherAgent:
 
 
 # ─────────────────────────────────────────────────────────────
+# AGENT 2.5: Academic Research Agent (arXiv + Scholar)
+# ─────────────────────────────────────────────────────────────
+class AcademicSearcherAgent:
+    """Searches arXiv for peer-reviewed academic papers and scientific preprints."""
+
+    def search_arxiv(self, query: str, max_results: int = 3) -> list:
+        try:
+            import xml.etree.ElementTree as ET
+            encoded = urllib.parse.quote_plus(query)
+            url = f"http://export.arxiv.org/api/query?search_query=all:{encoded}&start=0&max_results={max_results}"
+            resp = requests.get(url, timeout=8, headers={"User-Agent": "AlfredResearchSwarm/2.0"})
+            if resp.status_code != 200:
+                return []
+            
+            root = ET.fromstring(resp.text)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            papers = []
+            for entry in root.findall('atom:entry', ns):
+                title = entry.find('atom:title', ns)
+                summary = entry.find('atom:summary', ns)
+                published = entry.find('atom:published', ns)
+                id_elem = entry.find('atom:id', ns)
+                
+                t_text = title.text.strip().replace('\n', ' ') if title is not None and title.text else "Untitled Paper"
+                s_text = summary.text.strip().replace('\n', ' ') if summary is not None and summary.text else ""
+                pub_date = published.text[:10] if published is not None and published.text else "Recent"
+                link = id_elem.text.strip() if id_elem is not None and id_elem.text else ""
+                
+                if s_text:
+                    papers.append({
+                        "url": link,
+                        "title": f"[arXiv: {pub_date}] {t_text}",
+                        "content": f"Title: {t_text}\nPublished: {pub_date}\nLink: {link}\nAbstract: {s_text[:1200]}"
+                    })
+            return papers
+        except Exception as e:
+            shared.push_log(f"arXiv academic query note: {e}", "SwarmScholar")
+            return []
+
+
+# ─────────────────────────────────────────────────────────────
 # AGENT 3: Resilient Scraper Agent
 # ─────────────────────────────────────────────────────────────
 class ScraperAgent:
@@ -351,6 +392,7 @@ class SwarmOrchestratorV2:
     def __init__(self):
         self.planner = QueryPlannerAgent()
         self.searcher = SearcherAgent()
+        self.academic = AcademicSearcherAgent()
         self.scraper = ScraperAgent()
         self.fact_checker = FactCheckerAgent()
         self.synthesizer = SynthesizerAgent()
@@ -358,34 +400,53 @@ class SwarmOrchestratorV2:
     def run(self, topic: str) -> str:
         t0 = time.time()
         shared.push_log(f"Initiating Deep Research Swarm v2 for: '{topic}'", "SwarmOrchestrator")
+        shared.push_swarm_progress("planning", "QueryPlannerAgent", f"Decomposing '{topic}' into specialized search vectors...", 15, 0, topic)
 
         # ── Phase 1: Query Decomposition ──
         shared.push_log("Phase 1/5: Decomposing research vectors...", "SwarmOrchestrator")
         queries = self.planner.plan_queries(topic)
         shared.push_log(f"Generated {len(queries)} specialized search vectors.", "SwarmOrchestrator")
 
-        # ── Phase 2: Parallel Search ──
-        shared.push_log("Phase 2/5: Deploying searcher agents across multi-engine index...", "SwarmOrchestrator")
-        urls = self.searcher.gather_sources(queries, topic)
-        if not urls:
+        # ── Phase 2: Parallel Search & Academic Retrieval ──
+        shared.push_swarm_progress("searching", "SearcherAgent", "Deploying searcher agents across multi-engine index & arXiv...", 35, 0, topic)
+        shared.push_log("Phase 2/5: Deploying searcher agents across multi-engine index & arXiv...", "SwarmOrchestrator")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            fut_urls = executor.submit(self.searcher.gather_sources, queries, topic)
+            fut_academic = executor.submit(self.academic.search_arxiv, topic, 3)
+            urls = fut_urls.result()
+            academic_papers = fut_academic.result()
+
+        if not urls and not academic_papers:
+            shared.push_swarm_progress("failed", "SwarmOrchestrator", f"Unable to locate live sources for '{topic}'.", 0, 0, topic)
             return f"The research swarm was unable to locate live public sources for '{topic}', sir."
 
-        shared.push_log(f"Found {len(urls)} target sources.", "SwarmOrchestrator")
+        total_sources_count = len(urls) + len(academic_papers)
+        shared.push_log(f"Found {len(urls)} web sources and {len(academic_papers)} academic research papers.", "SwarmOrchestrator")
 
         # ── Phase 3: Parallel Scraping ──
+        shared.push_swarm_progress("scraping", "ScraperAgent", f"Extracting content from {len(urls)} web sources + {len(academic_papers)} papers...", 55, total_sources_count, topic)
         shared.push_log("Phase 3/5: Scraper agents extracting full-text payloads...", "SwarmOrchestrator")
         extracted_sources = self.scraper.scrape_all(urls)
+
+        # Merge academic preprints & abstracts
+        if academic_papers:
+            extracted_sources.extend(academic_papers)
+
         if not extracted_sources:
-            return f"The swarm identified candidate URLs for '{topic}', but content extraction was blocked."
+            shared.push_swarm_progress("failed", "SwarmOrchestrator", "Content extraction was blocked.", 0, 0, topic)
+            return f"The swarm identified candidate sources for '{topic}', but content extraction was blocked."
 
         total_chars = sum(len(s["content"]) for s in extracted_sources)
         shared.push_log(f"Extracted {total_chars:,} characters from {len(extracted_sources)} sources.", "SwarmOrchestrator")
 
         # ── Phase 4: Fact-Checking ──
+        shared.push_swarm_progress("fact_checking", "FactCheckerAgent", "Cross-examining sources and validating claims...", 75, len(extracted_sources), topic)
         shared.push_log("Phase 4/5: Cross-examining claims and validating facts...", "SwarmOrchestrator")
         fact_check_report = self.fact_checker.analyze(topic, extracted_sources)
 
         # ── Phase 5: Dossier Synthesis ──
+        shared.push_swarm_progress("synthesizing", "SynthesizerAgent", "Compiling executive research dossier with citations...", 90, len(extracted_sources), topic)
         shared.push_log("Phase 5/5: Compiling executive research dossier...", "SwarmOrchestrator")
         dossier = self.synthesizer.generate_dossier(topic, extracted_sources, fact_check_report)
 
@@ -431,6 +492,7 @@ class SwarmOrchestratorV2:
 
         elapsed = time.time() - t0
         shared.push_log(f"Swarm v2 complete in {elapsed:.1f}s!", "SwarmOrchestrator")
+        shared.push_swarm_progress("completed", "KnowledgeIntegrator", f"Dossier ready & saved to {filename}", 100, len(extracted_sources), topic, filename)
 
         # Extract executive summary bullet points for voice response
         spoken_summary = self._extract_spoken_summary(topic, dossier, filename)
