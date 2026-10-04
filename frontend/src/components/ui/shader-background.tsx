@@ -5,10 +5,29 @@ interface ShaderBackgroundProps {
   mood?: string;
   face_x?: number;
   face_y?: number;
+  personaColor?: string;
 }
 
-const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
+function hexToRgb(hex: string): [number, number, number] {
+  hex = hex.replace(/^#/, '');
+  if (hex.length === 3) {
+    hex = hex.split('').map(c => c + c).join('');
+  }
+  const num = parseInt(hex, 16);
+  if (isNaN(num)) return [0.83, 0.66, 0.34];
+  return [
+    ((num >> 16) & 255) / 255,
+    ((num >> 8) & 255) / 255,
+    (num & 255) / 255
+  ];
+}
+
+const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: ShaderBackgroundProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const personaColorRef = useRef(personaColor);
+  useEffect(() => {
+    personaColorRef.current = personaColor;
+  }, [personaColor]);
   
   // Add an artificial delay to the speaking state to sync with Edge TTS audio download latency
   const [delayedState, setDelayedState] = useState(state);
@@ -41,16 +60,17 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
     uniform float uState; // 0=idle, 1=listening, 2=processing, 3=speaking
     uniform float uAmplitude;
     uniform vec2 uMouse;
+    uniform vec3 uPersonaColor;
 
-    // Generate internal color blobs (Dark Grey / Silver Theme)
-    vec3 getInterior(vec3 p, float t, float state) {
+    // Generate internal color blobs (Themed to active persona)
+    vec3 getInterior(vec3 p, float t, float state, vec3 personaCol) {
         float timeScale = (state == 2.0) ? 2.0 : (state == 3.0) ? 1.5 : 0.8;
         t *= timeScale;
         
-        vec3 col1 = vec3(0.08, 0.08, 0.08); // dark grey
-        vec3 col2 = vec3(0.12, 0.12, 0.12); // slightly lighter
-        vec3 col3 = vec3(0.20, 0.20, 0.20); // medium grey
-        vec3 col4 = vec3(0.35, 0.35, 0.35); // silver highlights
+        vec3 col1 = vec3(0.04, 0.04, 0.06); // deep tinted base
+        vec3 col2 = mix(vec3(0.06, 0.07, 0.09), personaCol * 0.45, 0.65); 
+        vec3 col3 = mix(vec3(0.10, 0.11, 0.14), personaCol * 0.85, 0.80); 
+        vec3 col4 = personaCol * 1.35; // vibrant persona highlights
         
         float n1 = sin(p.x * 4.0 + t) * cos(p.y * 3.0 - t*0.8) * sin(p.z * 3.0 + t);
         float n2 = sin(p.x * 5.0 - t*1.2) * cos(p.y * 4.0 + t*1.1) * sin(p.z * 2.0 - t);
@@ -60,16 +80,16 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
         final = mix(final, col3, smoothstep(-0.5, 1.0, n2));
         final = mix(final, col4, smoothstep(-0.5, 1.0, n3));
         
-        // processing state adds subtle amber glow
+        // processing state adds pulsating persona color glow
         if (state == 2.0) {
-            final = mix(final, vec3(0.5, 0.4, 0.2), 0.3 + 0.2 * sin(t * 3.0));
+            final = mix(final, personaCol * 1.8, 0.45 + 0.3 * sin(t * 3.0));
         }
-        // speaking state adds pulsing brightness
+        // speaking state adds pulsing brightness & persona saturation
         if (state == 3.0) {
-            final *= 1.0 + 0.3 * sin(t * 4.0);
+            final = mix(final * (1.0 + 0.35 * sin(t * 4.0)), personaCol * 1.9, 0.5);
         }
         
-        return final * 1.5; // brightness boost
+        return final * 1.6; // brightness boost
     }
 
     // Distance to capsule for eyes
@@ -105,7 +125,7 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
         // Ambient glow behind orb
         float dist = length(uv);
         float glowAmount = smoothstep(1.5, sR - 0.2, dist);
-        vec3 glowColor = getInterior(vec3(uv, 0.0), iTime * 0.2, uState) * 0.3;
+        vec3 glowColor = getInterior(vec3(uv, 0.0), iTime * 0.2, uState, uPersonaColor) * 0.3;
         col += glowColor * glowAmount;
         
         // Floor reflection (fake)
@@ -129,7 +149,7 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
                 float fresnel = pow(1.0 - max(dot(n, v), 0.0), 3.5);
                 
                 // Interior colors
-                vec3 interior = getInterior(p, iTime * 0.5, uState);
+                vec3 interior = getInterior(p, iTime * 0.5, uState, uPersonaColor);
                 
                 // Specular highlight
                 vec3 lightDir = normalize(vec3(1.0, 1.0, -1.0));
@@ -183,7 +203,7 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
             float ring1 = smoothstep(ringThickness, 0.0, abs(distToCenter - ringRadius));
             float ring2 = smoothstep(ringThickness * 0.5, 0.0, abs(distToCenter - (ringRadius + 0.08)));
             
-            vec3 ringColor = (uState == 3.0) ? vec3(0.4, 0.8, 1.0) : vec3(1.0, 0.6, 0.2); // Blue for speaking, amber for processing
+            vec3 ringColor = (uState == 3.0) ? uPersonaColor : mix(uPersonaColor, vec3(1.0, 0.7, 0.2), 0.5);
             
             // Pulse opacity
             float ringAlpha = (ring1 + ring2) * (0.3 + uAmplitude * 0.7);
@@ -268,6 +288,7 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
         state: gl.getUniformLocation(shaderProgram, 'uState'),
         amplitude: gl.getUniformLocation(shaderProgram, 'uAmplitude'),
         mouse: gl.getUniformLocation(shaderProgram, 'uMouse'),
+        personaColor: gl.getUniformLocation(shaderProgram, 'uPersonaColor'),
       },
     };
 
@@ -331,6 +352,13 @@ const ShaderBackground = ({ state, face_x, face_y }: ShaderBackgroundProps) => {
       gl.uniform1f(programInfo.uniformLocations.time, currentTime);
       gl.uniform1f(programInfo.uniformLocations.state, targetState);
       gl.uniform1f(programInfo.uniformLocations.amplitude, currentAmplitude);
+      
+      // Persona RGB Uniform
+      const [pr, pg, pb] = hexToRgb(personaColorRef.current || '#d4a956');
+      if (programInfo.uniformLocations.personaColor) {
+        gl.uniform3f(programInfo.uniformLocations.personaColor, pr, pg, pb);
+      }
+
       // Face tracking or mouse fallback
       let currentMouseX = face_x !== undefined ? face_x : mouseX;
       let currentMouseY = face_y !== undefined ? 1.0 - face_y : mouseY;

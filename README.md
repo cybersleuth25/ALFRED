@@ -193,6 +193,13 @@ npm run build
 cd ..
 ```
 
+### 6. Verify the Checkout
+Run the Python test suite and production frontend build before committing changes:
+```powershell
+python -m pytest -q
+npm --prefix frontend run build
+```
+
 ---
 
 ## 💻 Running Alfred
@@ -232,6 +239,8 @@ Add a shortcut of [`start_alfred.bat`](file:///c:/VS%20Code/JARVIS/start_alfred.
 | `"Lock system / sleep PC"` | Instantly triggers native Windows security lock or sleep |
 | `"Open PinViz"` | Launches 3D spatial photo visualizer with webcam gesture control |
 | `"Who is at my desk?"` | Runs face detection and reports present individuals |
+| `"What's on my calendar / schedule?"` | Reads today's meetings and events synced from Google & Samsung Calendar |
+| `"Schedule a meeting [title] at [time]"` | Schedules a new event on Google Calendar (syncs down to your phone) |
 | `"Research [topic]"` | Delegates to Scholar & OSINT sub-agents to generate a briefing |
 
 ---

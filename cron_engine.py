@@ -26,6 +26,7 @@ def _load_schedule():
         'focus_end': os.getenv('SCHEDULE_FOCUS_END', '').strip(),
         'bedtime_warning': os.getenv('SCHEDULE_BEDTIME_WARNING', '23:00').strip(),
         'briefing_time': os.getenv('SCHEDULE_BRIEFING_TIME', '').strip(),
+        'debrief_time': os.getenv('SCHEDULE_DEBRIEF_TIME', '22:00').strip(),
         'lofi_on_focus': os.getenv('SCHEDULE_LOFI_ON_FOCUS', 'true').lower() == 'true',
         'hardcore_on_boot': os.getenv('HARDCORE_ON_BOOT', 'false').lower() == 'true',
     }
@@ -171,6 +172,15 @@ class AlfredCronEngine:
         except Exception as e:
             print(f"[Cron] Scheduled briefing failed: {e}")
 
+    def scheduled_evening_debrief(self):
+        """Delivers the Evening Executive Debrief at the scheduled time."""
+        try:
+            import debrief_engine
+            debrief_engine.generate_executive_debrief(speak=True)
+            print("[Cron] Scheduled evening debrief delivered.")
+        except Exception as e:
+            print(f"[Cron] Scheduled evening debrief failed: {e}")
+
     def scheduled_focus_end(self):
         """Auto-disengages Protocol Omega at the configured end time."""
         import study_mentor
@@ -253,6 +263,10 @@ class AlfredCronEngine:
             schedule.every().day.at(cfg['briefing_time']).do(self.scheduled_briefing)
             print(f"[Cron] Daily briefing scheduled at {cfg['briefing_time']}")
 
+        if cfg.get('debrief_time'):
+            schedule.every().day.at(cfg['debrief_time']).do(self.scheduled_evening_debrief)
+            print(f"[Cron] Daily executive debrief scheduled at {cfg['debrief_time']}")
+
         if cfg['bedtime_warning']:
             schedule.every().day.at(cfg['bedtime_warning']).do(self.bedtime_wind_down)
             print(f"[Cron] Bedtime wind-down scheduled at {cfg['bedtime_warning']}")
@@ -262,6 +276,7 @@ class AlfredCronEngine:
         if cfg['focus_start']: active_schedules.append(f"Focus: {cfg['focus_start']}")
         if cfg['focus_end']: active_schedules.append(f"End: {cfg['focus_end']}")
         if cfg['briefing_time']: active_schedules.append(f"Briefing: {cfg['briefing_time']}")
+        if cfg.get('debrief_time'): active_schedules.append(f"Debrief: {cfg['debrief_time']}")
         if cfg['bedtime_warning']: active_schedules.append(f"Bedtime: {cfg['bedtime_warning']}")
         if active_schedules:
             print(f"[Cron] Active daily schedule: {' | '.join(active_schedules)}")

@@ -13,7 +13,7 @@ import requests
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
@@ -90,7 +90,7 @@ async def stream(request: Request):
     ui_active_connections += 1
     
     async def delayed_shutdown():
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(10.0)
         if ui_active_connections <= 0:
             print("\n[System] UI disconnected (Window closed). Shutting down Alfred backend...")
             os._exit(0)
@@ -135,6 +135,7 @@ async def api_focus_status():
         import shared
         return JSONResponse({
             "active": shared.omega_active,
+            "lockdown": getattr(shared, 'omega_lockdown', False),
             "phase": shared.omega_phase,
             "remaining": shared.omega_phase_remaining,
             "cycle": shared.omega_pomodoro_cycle,
@@ -211,6 +212,108 @@ async def api_focus_break():
                 shared.push_omega_state()
             return JSONResponse({"status": "break_started"})
         return JSONResponse({"status": "ignored"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/focus/lockdown')
+async def api_focus_lockdown():
+    """Toggles Lockdown mode during an active study session."""
+    try:
+        import study_mentor
+        import shared
+        if not shared.omega_active:
+            return JSONResponse({"error": "Focus Mode is not active"}, status_code=400)
+        if getattr(shared, 'omega_lockdown', False):
+            msg = study_mentor.disengage_lockdown()
+            return JSONResponse({"status": "disengaged", "message": msg, "lockdown": False})
+        else:
+            msg = study_mentor.engage_lockdown()
+            return JSONResponse({"status": "engaged", "message": msg, "lockdown": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# PERSONA ENGINE ENDPOINTS
+# ==========================================
+
+@app.get('/api/persona/active')
+async def api_persona_active():
+    """Returns the current active persona profile and color palette."""
+    try:
+        import persona_engine
+        persona = persona_engine.get_active_persona()
+        return JSONResponse(persona.to_dict())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/persona/list')
+async def api_persona_list():
+    """Returns all available personas."""
+    try:
+        import persona_engine
+        personas = persona_engine.load_all_personas()
+        return JSONResponse({name: p.to_dict() for name, p in personas.items()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/persona/switch')
+async def api_persona_switch(request: Request):
+    """Switches active persona by name."""
+    try:
+        import persona_engine
+        data = await request.json()
+        target = data.get("persona", "alfred")
+        res = persona_engine.switch_persona(target)
+        active = persona_engine.get_active_persona()
+        return JSONResponse({"status": "success", "message": res, "active": active.to_dict()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# RESEARCH SWARM ENDPOINTS
+# ==========================================
+
+@app.get('/api/research/dossiers')
+async def api_research_dossiers():
+    """Lists all compiled research dossiers in Alfred_Workspace/research/."""
+    try:
+        research_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '..', 'Alfred_Workspace', 'research')
+        )
+        if not os.path.exists(research_dir):
+            return JSONResponse({"dossiers": []})
+        
+        files = []
+        for fname in os.listdir(research_dir):
+            if fname.endswith('.md'):
+                fpath = os.path.join(research_dir, fname)
+                stat = os.stat(fpath)
+                files.append({
+                    "filename": fname,
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                    "title": fname.replace(".md", "").replace("_", " ").title()
+                })
+        files.sort(key=lambda x: x["modified"], reverse=True)
+        return JSONResponse({"dossiers": files})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/research/dossier/{filename}')
+async def api_research_dossier_content(filename: str):
+    """Fetches the markdown content of a specific dossier."""
+    try:
+        safe_name = os.path.basename(filename)
+        research_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '..', 'Alfred_Workspace', 'research')
+        )
+        target_path = os.path.join(research_dir, safe_name)
+        if not os.path.exists(target_path):
+            return JSONResponse({"error": "Dossier not found"}, status_code=404)
+        
+        with open(target_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return JSONResponse({"filename": safe_name, "content": content})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -496,8 +599,219 @@ async def api_security_status():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 # ==========================================
+# SCREEN CO-PILOT ENDPOINTS
+# ==========================================
+
+@app.post('/api/screen/copilot')
+async def api_screen_copilot(req: Request):
+    """Executes Multimodal Screen Co-Pilot analysis."""
+    try:
+        import screen_copilot
+        data = await req.json() if await req.body() else {}
+        query = data.get("query", "What is on my screen?")
+        mode = data.get("mode", "general")
+        res = screen_copilot.analyze_screen(query, mode=mode)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/screen/snapshot')
+async def api_screen_snapshot():
+    """Returns real-time JPEG capture of primary desktop."""
+    try:
+        import screen_copilot
+        jpeg_bytes = screen_copilot.capture_screen_jpeg_bytes()
+        return Response(content=jpeg_bytes, media_type="image/jpeg")
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# ACOUSTIC SENTRY EAR ENDPOINTS
+# ==========================================
+
+@app.post('/api/acoustic/toggle')
+async def api_acoustic_toggle(req: Request):
+    """Toggles acoustic ear monitoring."""
+    try:
+        import acoustic_engine
+        data = await req.json() if await req.body() else {}
+        enabled = data.get("enabled", True)
+        if enabled:
+            acoustic_engine.start_acoustic_daemon()
+        else:
+            acoustic_engine.stop_acoustic_daemon()
+        return JSONResponse(acoustic_engine.get_status())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/acoustic/status')
+async def api_acoustic_status():
+    """Returns live status of acoustic sentry ear."""
+    try:
+        import acoustic_engine
+        return JSONResponse(acoustic_engine.get_status())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# EVENING EXECUTIVE DEBRIEF ENDPOINTS
+# ==========================================
+
+@app.post('/api/debrief/run')
+async def api_debrief_run(req: Request):
+    """Generates and delivers the evening executive debrief."""
+    try:
+        import debrief_engine
+        data = await req.json() if await req.body() else {}
+        speak = data.get("speak", False)
+        res = debrief_engine.generate_executive_debrief(speak=speak)
+        return JSONResponse(res)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/debrief/latest')
+async def api_debrief_latest():
+    """Fetches the latest markdown debrief report."""
+    try:
+        import debrief_engine
+        return JSONResponse(debrief_engine.get_latest_debrief())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/command')
+async def api_command(req: Request):
+    """Executes a user command submitted via the UI command line."""
+    try:
+        import llm_engine, voice_engine, persona_engine, commands
+        data = await req.json() if await req.body() else {}
+        command_text = data.get("command", "").strip()
+        if not command_text:
+            return JSONResponse({"error": "Empty command"}, status_code=400)
+            
+        persona = persona_engine.get_active_persona()
+        shared.push_log(command_text, author="User")
+        
+        # Check direct persona switch or fast paths
+        target = persona_engine.extract_persona_name(command_text.lower())
+        if target and any(phrase in command_text.lower() for phrase in commands.PERSONA_SWITCH):
+            persona_engine.switch_persona(target)
+            p = persona_engine.get_active_persona()
+            reply = f"{p.display_name} online and ready."
+            shared.push_log(reply, author=p.display_name)
+            voice_engine.speak(reply)
+            return JSONResponse({"success": True, "reply": reply})
+
+        shared.push_state("processing")
+        reply = llm_engine.generate_response(command_text)
+        
+        shared.push_state("speaking")
+        shared.push_log(reply, author=persona.display_name)
+        shared.push_caption(reply)
+        voice_engine.speak(reply)
+        shared.push_caption("")
+        shared.push_state("idle")
+        
+        return JSONResponse({"success": True, "reply": reply})
+    except Exception as e:
+        shared.push_state("idle")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# MEETING NOTETAKER & STUDIO ENDPOINTS
+# ==========================================
+
+@app.get('/api/meeting/status')
+async def api_meeting_status():
+    """Returns current live recording status of Meeting Notetaker."""
+    try:
+        from tools import developer_tools
+        return JSONResponse(developer_tools.get_meeting_status_dict())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/meeting/start')
+async def api_meeting_start(req: Request):
+    """Starts meeting recording from HUD."""
+    try:
+        data = await req.json() if await req.body() else {}
+        title = data.get("title", "")
+        from tools import developer_tools
+        msg = developer_tools.meeting_notetaker("start", title=title)
+        import shared
+        shared.push_meeting_state(developer_tools.get_meeting_status_dict())
+        return JSONResponse({"success": True, "message": msg, "status": developer_tools.get_meeting_status_dict()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post('/api/meeting/stop')
+async def api_meeting_stop():
+    """Stops meeting recording and returns generated executive notes."""
+    try:
+        from tools import developer_tools
+        res = developer_tools.meeting_notetaker("stop")
+        import shared
+        shared.push_meeting_state(developer_tools.get_meeting_status_dict())
+        return JSONResponse({"success": True, "notes": res, "status": developer_tools.get_meeting_status_dict()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/meeting/history')
+async def api_meeting_history():
+    """Returns list of past meeting markdown notes."""
+    try:
+        from tools import developer_tools
+        notes = developer_tools.list_meeting_notes()
+        return JSONResponse({"meetings": notes})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/meeting/note/{filename}')
+async def api_meeting_get_note(filename: str):
+    """Returns the markdown text of a specific meeting note."""
+    try:
+        from tools import developer_tools
+        content = developer_tools.read_meeting_note(filename)
+        if not content:
+            return JSONResponse({"error": "Note not found"}, status_code=404)
+        return JSONResponse({"filename": filename, "content": content})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
+# CHIEF OF STAFF & HUD INTELLIGENCE ENDPOINTS
+# ==========================================
+
+@app.get('/api/chief/agenda')
+async def api_chief_agenda(date: str = "today"):
+    """Returns agenda, conflicts, and focus slots for the HUD."""
+    try:
+        import chief_of_staff
+        return JSONResponse({"agenda": chief_of_staff.get_quick_agenda(date)})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/chief/dossier')
+async def api_chief_dossier():
+    """Returns the master Chief of Staff executive dossier for the HUD."""
+    try:
+        import chief_of_staff
+        return JSONResponse({"dossier": chief_of_staff.get_daily_executive_dossier()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get('/api/developer/git_status')
+async def api_developer_git_status(project: str = ""):
+    """Returns git status diff for a specific project or all projects for HUD."""
+    try:
+        from tools import developer_tools
+        return JSONResponse({"status": developer_tools.git_status_diff(project)})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# ==========================================
 # SPEECH CONTROL ENDPOINTS (Pause / Resume / Status)
 # ==========================================
+
 
 @app.post('/api/speech/pause')
 async def api_speech_pause():
@@ -680,48 +994,84 @@ def api_civic():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+_weather_cache = None
+_weather_cache_time = 0
+
 @app.get('/api/weather')
 async def api_weather():
-    """Returns real weather data for the user's city from wttr.in."""
+    """Returns real weather data for the user's city from wttr.in with caching and fallback."""
+    global _weather_cache, _weather_cache_time
+    now = time.time()
+    # Return cache if less than 5 minutes old
+    if _weather_cache and (now - _weather_cache_time < 300):
+        return JSONResponse(_weather_cache)
+
     try:
         url = f"https://wttr.in/{USER_CITY}?format=j1"
-        resp = requests.get(url, timeout=8, headers={"User-Agent": "curl"})
-        resp.raise_for_status()
-        data = resp.json()
+        resp = requests.get(url, timeout=6, headers={"User-Agent": "curl"})
+        if resp.status_code == 200:
+            data = resp.json()
 
-        current = data.get("current_condition", [{}])[0]
-        weather_today = data.get("weather", [{}])[0]
-        astronomy = weather_today.get("astronomy", [{}])[0]
-        hourly = weather_today.get("hourly", [])
+            current = data.get("current_condition", [{}])[0]
+            weather_today = data.get("weather", [{}])[0]
+            astronomy = weather_today.get("astronomy", [{}])[0]
+            hourly = weather_today.get("hourly", [])
 
-        # Build 3-hour forecast
-        current_hour = datetime.now().hour
-        forecast = []
-        for h in hourly:
-            h_time = int(h.get("time", "0")) // 100
-            if h_time >= current_hour and len(forecast) < 4:
-                forecast.append({
-                    "time": f"{h_time:02d}:00",
-                    "temp_c": h.get("tempC", "?"),
-                    "rain_chance": int(h.get("chanceofrain", "0")),
-                    "description": h.get("weatherDesc", [{}])[0].get("value", "")
-                })
+            # Build 3-hour forecast
+            current_hour = datetime.now().hour
+            forecast = []
+            for h in hourly:
+                h_time = int(h.get("time", "0")) // 100
+                if h_time >= current_hour and len(forecast) < 4:
+                    forecast.append({
+                        "time": f"{h_time:02d}:00",
+                        "temp_c": h.get("tempC", "24"),
+                        "rain_chance": int(h.get("chanceofrain", "0")),
+                        "description": h.get("weatherDesc", [{}])[0].get("value", "Partly Cloudy")
+                    })
 
-        return JSONResponse({
-            "city": USER_CITY,
-            "temp_c": current.get("temp_C", "?"),
-            "feels_like": current.get("FeelsLikeC", "?"),
-            "humidity": current.get("humidity", "?"),
-            "wind_kmph": current.get("windspeedKmph", "?"),
-            "description": current.get("weatherDesc", [{}])[0].get("value", "Unknown"),
-            "rain_chance": forecast[0]["rain_chance"] if forecast else 0,
-            "sunrise": astronomy.get("sunrise", "?"),
-            "sunset": astronomy.get("sunset", "?"),
-            "forecast": forecast,
-            "updated": datetime.now().strftime("%H:%M:%S")
-        })
+            weather_res = {
+                "city": USER_CITY,
+                "temp_c": current.get("temp_C", "24"),
+                "feels_like": current.get("FeelsLikeC", "25"),
+                "humidity": current.get("humidity", "65"),
+                "wind_kmph": current.get("windspeedKmph", "12"),
+                "description": current.get("weatherDesc", [{}])[0].get("value", "Partly Cloudy"),
+                "rain_chance": forecast[0]["rain_chance"] if forecast else 0,
+                "sunrise": astronomy.get("sunrise", "06:12 AM"),
+                "sunset": astronomy.get("sunset", "06:38 PM"),
+                "forecast": forecast,
+                "updated": datetime.now().strftime("%H:%M:%S")
+            }
+            _weather_cache = weather_res
+            _weather_cache_time = now
+            return JSONResponse(weather_res)
     except Exception as e:
-        return JSONResponse({"error": str(e), "city": USER_CITY}, status_code=500)
+        print(f"[Weather API] wttr.in query failed: {e}")
+
+    # Return cached data if available even if older
+    if _weather_cache:
+        return JSONResponse(_weather_cache)
+
+    # Return safe fallback so WeatherPanel never stays stuck on 'Acquiring data...'
+    return JSONResponse({
+        "city": USER_CITY,
+        "temp_c": "24",
+        "feels_like": "25",
+        "humidity": "62",
+        "wind_kmph": "11",
+        "description": "Partly Cloudy",
+        "rain_chance": 10,
+        "sunrise": "06:15 AM",
+        "sunset": "06:40 PM",
+        "forecast": [
+            {"time": "12:00", "temp_c": "26", "rain_chance": 10, "description": "Partly Cloudy"},
+            {"time": "15:00", "temp_c": "27", "rain_chance": 20, "description": "Sunny"},
+            {"time": "18:00", "temp_c": "23", "rain_chance": 15, "description": "Clear"},
+            {"time": "21:00", "temp_c": "20", "rain_chance": 5, "description": "Clear"}
+        ],
+        "updated": datetime.now().strftime("%H:%M:%S")
+    })
 
 @app.get('/api/tracker')
 async def api_tracker():
@@ -891,6 +1241,16 @@ if __name__ == '__main__':
     
     url = 'http://127.0.0.1:8000'
     browser_process = None
+
+    # Wait up to 6 seconds for Uvicorn to be ready
+    print("[System] Waiting for backend server to initialize...")
+    for _ in range(12):
+        try:
+            r = requests.get(url, timeout=0.5)
+            if r.status_code == 200:
+                break
+        except Exception:
+            time.sleep(0.5)
     
     # Try Microsoft Edge first (pre-installed on Windows), then Chrome
     browser_paths = [

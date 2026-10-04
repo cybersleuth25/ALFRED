@@ -1,5 +1,7 @@
 # Environment variables and secrets
 .env
+credentials.json
+token.json
 
 # SQLite databases (personal conversation history, facts, tasks)
 alfred_memory.db

@@ -25,8 +25,10 @@ try:
 except ImportError:
     _telegram_available = False
 
-INCIDENTS_DIR = os.path.join(os.path.dirname(__file__), "Alfred_Workspace", "incidents")
+INCIDENTS_DIR = os.path.join(os.path.dirname(__file__), "assets", "incidents")
 os.makedirs(INCIDENTS_DIR, exist_ok=True)
+WORKSPACE_INCIDENTS_DIR = os.path.join(os.path.dirname(__file__), "Alfred_Workspace", "incidents")
+os.makedirs(WORKSPACE_INCIDENTS_DIR, exist_ok=True)
 
 # Whitelist for legitimate high-CPU processes
 _SAFE_PROCESS_NAMES = frozenset([
@@ -365,10 +367,18 @@ def kill_process(pid: int) -> dict:
 
 def get_tripwire_status() -> dict:
     """Returns the operational status of the Digital Tripwire subsystem."""
+    now = datetime.datetime.now()
+    start_hour = int(os.getenv("AFTER_HOURS_START", "1"))
+    end_hour = int(os.getenv("AFTER_HOURS_END", "6"))
+    if start_hour < end_hour:
+        is_after_hours = start_hour <= now.hour < end_hour
+    else:
+        is_after_hours = now.hour >= start_hour or now.hour < end_hour
+
     return {
         "running": _tripwire_running,
         "monitored_drives": list(_known_drives),
-        "after_hours_active": int(os.getenv("AFTER_HOURS_START", "1")) <= datetime.datetime.now().hour < int(os.getenv("AFTER_HOURS_END", "6")),
+        "after_hours_active": is_after_hours,
         "telegram_alerts_enabled": _telegram_available
     }
 

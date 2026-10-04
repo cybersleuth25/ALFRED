@@ -20,6 +20,15 @@ import pyaudio
 import voice_engine
 import shared
 
+# Ensure UTF-8 console output on Windows to support Devanagari Hindi characters without crashing
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+
 # ── Vosk Offline Model (for wake word detection & speaker verification) ──
 VOSK_MODEL_PATH = os.path.join(os.path.dirname(__file__), "vosk_model")
 VOSK_SPK_MODEL_PATH = os.path.join(os.path.dirname(__file__), "vosk_spk")
@@ -61,17 +70,73 @@ except Exception as e:
 import speech_recognition as sr
 
 recognizer = sr.Recognizer()
-recognizer.pause_threshold = 1.4           # How long of silence = end of phrase (was 2.5s)
-recognizer.non_speaking_duration = 0.6    # Min silence to consider phrase ended (was 1.2s)
+recognizer.pause_threshold = 0.85          # Natural conversational pause (was 0.65s, prevents premature cutoffs)
+recognizer.non_speaking_duration = 0.45    # Clean silence cutoff
 recognizer.dynamic_energy_threshold = True
-recognizer.energy_threshold = 200         # Lowered for better mic sensitivity (was 300)
+recognizer.energy_threshold = 150         # Responsive mic calibration
 recognizer.operation_timeout = None       # Don't time out mid-recognition
+
+# ── Groq Whisper Turbo Low-Latency Engine (<250ms) ──
+_groq_client = None
+
+def _get_groq_client():
+    """Lazily initializes and reuses Groq client for low-latency Whisper STT."""
+    global _groq_client
+    if _groq_client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if api_key and not api_key.startswith("your_"):
+            try:
+                import groq
+                _groq_client = groq.Groq(api_key=api_key)
+            except Exception as e:
+                print(f"[STT] Groq client initialization failed: {e}")
+    return _groq_client
+
+
+def _transcribe_with_groq(audio) -> str:
+    """
+    Ultra-low latency multilingual transcription (<250ms) using Groq whisper-large-v3-turbo.
+    Supports English, Hindi, and Hinglish with extreme speed and acoustic precision.
+    """
+    client = _get_groq_client()
+    if not client:
+        return ""
+    try:
+        import io
+        wav_bytes = audio.get_wav_data(convert_rate=16000, convert_width=2)
+        bio = io.BytesIO(wav_bytes)
+        bio.name = "speech.wav"
+        
+        model_name = os.getenv("STT_MODEL", "whisper-large-v3-turbo")
+        prompt = (
+            "Voice commands for personal AI assistant ALFRED / JARVIS. User is Master Mihir in Chikkamagaluru, India. "
+            "Accurately transcribes technical terms, code snippets, Indian English accents, Hindi, Hinglish, Spotify song titles, "
+            "calendar events, emails, system commands, and conversational dialogue."
+        )
+        
+        t0 = time.time()
+        resp = client.audio.transcriptions.create(
+            file=("speech.wav", bio.getvalue()),
+            model=model_name,
+            prompt=prompt,
+            temperature=0.0
+        )
+        text = resp.text.strip()
+        elapsed = round(time.time() - t0, 3)
+        if text:
+            print(f"You (Groq {model_name}, {elapsed}s): {text}")
+            return text
+        return ""
+    except Exception as e:
+        error_type = type(e).__name__
+        print(f"[STT Groq {error_type}]: {e}")
+        return ""
 
 try:
     mic = sr.Microphone()
     with mic as source:
         print("[STT] Calibrating microphone for ambient noise...")
-        recognizer.adjust_for_ambient_noise(source, duration=1.0)
+        recognizer.adjust_for_ambient_noise(source, duration=0.8)
 except Exception as e:
     print(f"[STT Error] Microphone not found: {e}")
     mic = None
@@ -81,10 +146,13 @@ WAKE_WORD = "alfred"
 WAKE_SYNONYMS = [
     "alfred", "alford", "elfred", "alpha red", "all fred", "al fred",
     "albert", "elf red", "wake up", "hey alfred",
-    "alfie", "alfy", "alfread", "off red", "hal fred",   # extra fuzzy variants
-    "all right", "alfred please", "yo alfred",
-    "friday", "hey friday", "fry day", "fri day",        # Friday persona
-    "jarvis", "hey jarvis", "jar vis", "tarvis",         # Jarvis persona
+    "alfie", "alfy", "alfread", "off red", "hal fred",
+    "alferd", "aal-fred", "alfred please", "yo alfred",
+    "el fred", "all friend", "our friend", "al freid", "el ford",
+    "ulfrad", "al fret", "al freed", "halford", "all-fred",
+    "suno alfred", "sun alfred", "suno",                          # Indian bilingual wake triggers
+    "friday", "hey friday", "fry day", "fri day", "fryday", "suno friday",
+    "jarvis", "hey jarvis", "jar vis", "tarvis", "jarwis", "yaarvis", "jharvis", "suno jarvis"
 ]
 # Interrupt-only synonyms: these will stop Alfred mid-speech but do NOT wake him from sleep
 INTERRUPT_SYNONYMS = WAKE_SYNONYMS + [
@@ -165,9 +233,16 @@ def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
                 print("\n[Auto-Wake Triggered by Facial Recognition]")
                 return True
 
-            # Don't listen while Alfred is speaking (prevents self-trigger)
-            if voice_engine.is_speaking():
+            # Don't listen while Alfred is speaking or during echo reverb cooldown (prevents self-wake)
+            if voice_engine.is_speaking() or (time.time() - voice_engine.get_last_spoken_time() < 0.6):
                 time.sleep(0.1)
+                # Flush any mic buffer accumulated during speech so we don't process old speaker audio
+                try:
+                    avail = stream.get_read_available()
+                    if avail > 0:
+                        stream.read(avail, exception_on_overflow=False)
+                except Exception:
+                    pass
                 continue
 
             data = stream.read(VOSK_CHUNK, exception_on_overflow=False)
@@ -180,18 +255,24 @@ def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
                 if text:
                     print(f"   (Vosk heard: '{text}')", end="\r")
                     
+                    # Reject self-echo (e.g. Alfred saying his own name in greeting/status)
+                    if voice_engine.is_self_echo(text):
+                        continue
+
                     # Check for wake word
                     if any(word in text for word in synonyms):
-                        # Verify Speaker if profile exists
-                        if _authorized_voice and "spk" in result:
+                        # Verify Speaker only if explicitly enabled via SPEAKER_VERIFICATION=true
+                        enable_spk = os.getenv("SPEAKER_VERIFICATION", "false").lower() == "true"
+                        if enable_spk and _authorized_voice and "spk" in result:
                             sim = cosine_similarity(result["spk"], _authorized_voice)
                             print(f"\n[Speaker Verification] Sim: {sim:.2f}")
-                            if sim < 0.35: # Threshold for Vosk speaker model
+                            if sim < 0.25: # Relaxed threshold so legitimate user is never blocked
                                 print(f"[Wake word rejected] Unauthorized voice detected.")
                                 voice_engine.speak("Unauthorized user detected. Ignoring command.")
                                 # Don't return True, keep listening
                                 continue
 
+                        shared.last_wake_phrase = text
                         print(f"\n[Wake word detected!] (Vosk: '{text}')")
                         return True
                     
@@ -200,8 +281,11 @@ def _vosk_listen_for_wake(synonyms: list, prompt: str) -> bool:
                 partial = json.loads(rec.PartialResult())
                 partial_text = partial.get("partial", "").lower().strip()
                 if partial_text:
+                    if voice_engine.is_self_echo(partial_text):
+                        continue
                     # Quick check on partial for faster wake detection
                     if any(word in partial_text for word in synonyms):
+                        shared.last_wake_phrase = partial_text
                         print(f"\n[Wake word detected!] (Vosk partial: '{partial_text}')")
                         return True
 
@@ -235,12 +319,15 @@ def _google_listen_for_wake(synonyms: list, prompt: str) -> bool:
         recognizer.adjust_for_ambient_noise(source, duration=0.1)
         try:
             audio = recognizer.listen(source, timeout=1, phrase_time_limit=3)
-            text = recognizer.recognize_google(audio).lower()
+            # Use Indian English acoustic model for accurate wake recognition
+            text = recognizer.recognize_google(audio, language="en-IN").lower()
             print(f"   (Heard: '{text}')", end="\r")
 
             if any(word in text for word in synonyms):
+                shared.last_wake_phrase = text
                 print(f"\n[Wake word detected!]")
                 return True
+
 
             # (Removed aggressive voice exit from background listener)
 
@@ -269,43 +356,74 @@ def listen_for_command() -> str:
         time.sleep(0.1)
         if time.time() - _wait_start > 10:  # Safety timeout
             break
-    # Brief pause after speech ends to let audio reverb die down
-    time.sleep(0.15)
+    # Generous pause after speech ends to let audio reverb and hardware buffers drain completely
+    time.sleep(0.5)
 
     with mic as source:
-        print("\n[Alfred is listening...]")
-        # Ambient noise recalibration before each command (catches drift)
+        print("\n[Alfred is listening... (English & Hindi enabled)]")
+        # NOTE: Do NOT call adjust_for_ambient_noise here — it eats the first 500ms of user speech!
+        # Background dynamic_energy_threshold handles noise floor tracking automatically.
         try:
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-        except Exception:
-            pass
-        try:
-            audio = recognizer.listen(source, timeout=15, phrase_time_limit=18)
-            text = recognizer.recognize_google(audio)
-            print(f"You (Voice): {text}")
-            return text
+            audio = recognizer.listen(source, timeout=15, phrase_time_limit=25)
         except sr.WaitTimeoutError:
             print("[Alfred heard nothing...]")
             return ""
+
+        # ── Stage 1: Ultra-Fast Groq Whisper Turbo (<250ms) ──
+        groq_text = _transcribe_with_groq(audio)
+        if groq_text:
+            if voice_engine.is_self_echo(groq_text):
+                print(f"[STT] Ignored acoustic self-echo from speakers: '{groq_text}'")
+                return ""
+            return groq_text
+
+        # ── Stage 2: Fallback to Google STT Dual-Pass (en-IN + hi-IN) ──
+        primary_lang = os.getenv("STT_PRIMARY_LANGUAGE", "en-IN")
+        secondary_lang = os.getenv("STT_SECONDARY_LANGUAGE", "hi-IN")
+
+        # Pass 1: Primary Indian English (covers Indian accents, Hinglish, loanwords, song titles)
+        try:
+            text = recognizer.recognize_google(audio, language=primary_lang)
+            if voice_engine.is_self_echo(text):
+                print(f"[STT] Ignored acoustic self-echo from speakers: '{text}'")
+                return ""
+            print(f"You (Voice [{primary_lang}]): {text}")
+            return text
         except sr.UnknownValueError:
+            # Pass 2: Fallback to Hindi if primary didn't match (handles native Hindi speech)
+            if secondary_lang and secondary_lang != primary_lang:
+                try:
+                    text = recognizer.recognize_google(audio, language=secondary_lang)
+                    if text:
+                        if voice_engine.is_self_echo(text):
+                            print(f"[STT] Ignored acoustic self-echo from speakers: '{text}'")
+                            return ""
+                        print(f"You (Voice [{secondary_lang}]): {text}")
+                        return text
+                except sr.UnknownValueError:
+                    pass
+                except Exception as e:
+                    print(f"[STT Secondary Error]: {e}")
             print("[Alfred couldn't understand...]")
             return ""
         except sr.RequestError as e:
-            print(f"[STT Error] Google STT failed (possibly offline): {e}")
+            print(f"[STT Error] Google STT network error: {e}")
             if _vosk_available and _vosk_model:
                 print("[STT] Falling back to offline Vosk transcription...")
                 try:
-                    # Convert audio to Vosk format (16kHz, 1 channel, 16-bit PCM)
                     raw_data = audio.get_raw_data(convert_rate=16000, convert_width=2)
                     from vosk import KaldiRecognizer
-                    import json
                     rec = KaldiRecognizer(_vosk_model, 16000)
                     rec.AcceptWaveform(raw_data)
                     result = json.loads(rec.Result())
                     text = result.get("text", "").strip()
                     if text:
+                        if voice_engine.is_self_echo(text):
+                            print(f"[STT] Ignored acoustic self-echo from speakers: '{text}'")
+                            return ""
                         print(f"You (Voice - Offline Fallback): {text}")
                         return text
                 except Exception as ex:
                     print(f"[STT] Offline fallback failed: {ex}")
             return ""
+

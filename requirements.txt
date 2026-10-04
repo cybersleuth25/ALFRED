@@ -49,3 +49,12 @@ google-genai>=1.0.0        # Gemini API (screen analysis, skill engine)
 
 # --- OSINT Geolocation ---
 geopy>=2.4.0               # Forward/reverse geocoding (Nominatim)
+
+# --- Google Calendar & Productivity ---
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.0.0
+python-dateutil>=2.8.2
+
+# --- Market Intelligence & Chronos ---
+yfinance>=0.2.38

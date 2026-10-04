@@ -5,6 +5,11 @@ from tools import browser_tools
 from tools import desktop_tools
 from tools import swarm_engine
 from tools import vision_tools
+from tools import calendar_tools
+from tools import developer_tools
+from tools import email_tools
+from tools import market_tools
+import chief_of_staff
 import scholar_engine
 from datetime import datetime
 import requests
@@ -242,6 +247,15 @@ def play_music(song_query: str) -> str:
     import webbrowser
     import re
 
+    # Intercept generic phrases like "some song", "some music", "a song"
+    generic_terms = {
+        'some song', 'some songs', 'a song', 'music', 'some music',
+        'something', 'something good', 'good music', 'tunes', 'some tunes',
+        'random song', 'random music', 'song', 'songs', 'anything'
+    }
+    if song_query.lower().strip().rstrip("?!., ") in generic_terms:
+        return play_music_by_mood()
+
     def _play_on_youtube(q: str):
         q_clean = q.lower().replace("on youtube", "").replace("in youtube", "").replace("youtube", "").strip()
         query_string = urllib.parse.urlencode({"search_query": q_clean})
@@ -343,6 +357,76 @@ def play_music_by_mood() -> str:
     return play_music(query)
 
 
+def play_user_daily_rotation() -> str:
+    """
+    Fetches the user's actual Spotify listening history and frequent daily tracks,
+    and starts playback directly.
+    """
+    token = _get_spotify_user_token()
+    if not token:
+        return play_music_by_mood()
+    
+    try:
+        resp = requests.get(
+            "https://api.spotify.com/v1/me/player/recently-played?limit=50",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("items", [])
+            if items:
+                from collections import Counter
+                import random
+                
+                track_info = {}
+                track_uris = []
+                for item in items:
+                    t = item.get("track")
+                    if t and t.get("uri"):
+                        uri = t["uri"]
+                        track_info[uri] = {
+                            "name": t.get("name", "Unknown Track"),
+                            "artist": t.get("artists", [{}])[0].get("name", "Unknown Artist")
+                        }
+                        track_uris.append(uri)
+                
+                if track_uris:
+                    counts = Counter(track_uris)
+                    most_common = [uri for uri, _ in counts.most_common(10)]
+                    selected_uri = random.choice(most_common[:5]) if most_common else track_uris[0]
+                    selected_track = track_info[selected_uri]
+                    
+                    # Launch playback in Spotify
+                    try:
+                        play_resp = requests.put(
+                            "https://api.spotify.com/v1/me/player/play",
+                            headers={"Authorization": f"Bearer {token}"},
+                            json={"uris": [selected_uri]},
+                            timeout=5
+                        )
+                        if play_resp.status_code not in (200, 204):
+                            os.startfile(selected_uri)
+                    except Exception:
+                        os.startfile(selected_uri)
+
+                    # Learn user music taste into memory
+                    try:
+                        import memory_engine
+                        top_artists = [item['track']['artists'][0]['name'] for item in items if item.get('track')]
+                        common_artists = [art for art, cnt in Counter(top_artists).most_common(3)]
+                        if common_artists:
+                            memory_engine.store_user_fact(f"User frequently listens to: {', '.join(common_artists)} on Spotify.")
+                    except Exception:
+                        pass
+
+                    return f"Now playing from your daily rotation: {selected_track['name']} by {selected_track['artist']} on Spotify."
+    except Exception as e:
+        print(f"[Spotify] Failed to get user rotation: {e}")
+        
+    return play_music_by_mood()
+
+
 # ─────────────────────────────────────────────
 # SPOTIFY PLAYBACK CONTROLS (OAuth User Token)
 # ─────────────────────────────────────────────
@@ -376,7 +460,7 @@ def _get_spotify_user_token() -> str:
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token
             },
-            timeout=5
+            timeout=15
         )
         resp.raise_for_status()
         return resp.json().get("access_token", "")
@@ -395,7 +479,7 @@ def get_now_playing() -> str:
         resp = requests.get(
             "https://api.spotify.com/v1/me/player/currently-playing",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=5
+            timeout=15
         )
         
         if resp.status_code == 204 or not resp.content:
@@ -736,6 +820,11 @@ TOOL_REGISTRY = {
     "delete_reminder": delete_reminder,
     "clear_all_reminders": clear_all_reminders,
     
+    # Phase 1c: Calendar & Schedule (Google & Samsung Calendar)
+    "get_calendar_events": calendar_tools.get_calendar_events,
+    "create_calendar_event": calendar_tools.create_calendar_event,
+    "delete_calendar_event": calendar_tools.delete_calendar_event,
+    
     # Phase 1b: Persistent User Facts
     "remember_fact": remember_fact,
     "forget_fact": forget_fact,
@@ -763,6 +852,7 @@ TOOL_REGISTRY = {
     # Phase 7: Media & Communication
     "play_music": play_music,
     "play_music_by_mood": play_music_by_mood,
+    "play_user_daily_rotation": play_user_daily_rotation,
     "send_whatsapp": send_whatsapp,
     
     # Phase 8: OSINT & Intelligence
@@ -837,7 +927,32 @@ TOOL_REGISTRY = {
     # Phase 20: Second Brain / Knowledge Graph
     "query_knowledge_graph": lambda entity_name: str(__import__("knowledge_graph").query_subgraph(entity_name)),
     "extract_knowledge_from_text": lambda text: str(__import__("knowledge_graph").extract_and_link_from_text(text)),
+
+    # Phase 21: Developer Co-Pilot & Autonomous Workspace Agent
+    "git_status_diff": developer_tools.git_status_diff,
+    "git_smart_commit": developer_tools.git_smart_commit,
+    "scan_leaked_secrets": developer_tools.scan_leaked_secrets,
+    "clean_dev_workspace": developer_tools.clean_dev_workspace,
+    "run_terminal_command": developer_tools.run_terminal_command,
+    "meeting_notetaker": developer_tools.meeting_notetaker,
+
+    # Phase 22: Calendar, Email & Daily Chief of Staff
+    "detect_schedule_conflicts": calendar_tools.detect_schedule_conflicts,
+    "find_focus_slots": calendar_tools.find_focus_slots,
+    "get_unread_emails": email_tools.get_unread_emails,
+    "triage_inbox": email_tools.triage_inbox,
+    "draft_email_reply": email_tools.draft_email_reply,
+    "get_daily_executive_dossier": chief_of_staff.get_daily_executive_dossier,
+    "get_quick_agenda": chief_of_staff.get_quick_agenda,
+
+    # Phase 23: Market Intelligence & Financial Predictions (Amazon Chronos)
+    "get_stock_quote": market_tools.get_stock_quote,
+    "forecast_stock": market_tools.forecast_stock,
+
+    # Phase 24: Reverse Face Search & OSINT Facial Intelligence
+    "reverse_face_search": osint_tools.reverse_face_search,
 }
+
 
 # --- Dynamic Import of Custom Skills on Startup ---
 try:

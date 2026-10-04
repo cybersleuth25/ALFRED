@@ -58,14 +58,15 @@ def setup_test_db(monkeypatch):
     conn.commit()
     conn.close()
 
-    # 2. Provide a deterministic dummy embedding generator (768 dimensions)
+    # 2. Provide a deterministic dummy embedding generator using the active
+    # embedding dimension. This keeps the fixture aligned with the FAISS index.
     # based on the content of the string to test vector similarities.
     def mock_generate_embedding(text):
         if not text:
             return []
         # Return a normalized sine wave based on length and characters
         seed = len(text) + (ord(text[0]) if len(text) > 0 else 0)
-        vec = [math.sin(seed + i) for i in range(768)]
+        vec = [math.sin(seed + i) for i in range(memory_engine.EMBED_DIM)]
         # Normalize the vector to unit length
         norm = math.sqrt(sum(x*x for x in vec))
         if norm > 0:
@@ -74,7 +75,7 @@ def setup_test_db(monkeypatch):
 
     monkeypatch.setattr(memory_engine, "_generate_embedding", mock_generate_embedding)
 
-    # 3. Mock the local client embedding API in the shared module
+    # 3. Mock the OpenAI-compatible client used by both fast and smart routes.
     mock_client = MagicMock()
     def mock_embed(model, input):
         if isinstance(input, str):
@@ -84,22 +85,21 @@ def setup_test_db(monkeypatch):
         return {"embeddings": []}
     mock_client.embed = mock_embed
 
-    def mock_chat(*args, **kwargs):
-        is_stream = kwargs.get("stream", False)
-        if is_stream:
+    def mock_chat_completion(*args, **kwargs):
+        if kwargs.get("stream", False):
             return [
-                {"message": {"content": "[MOOD: calm] Hello, I "}},
-                {"message": {"content": "am a mock "}},
-                {"message": {"content": "agent."}}
+                MagicMock(choices=[MagicMock(delta=MagicMock(content="[MOOD: calm] Hello, I "))]),
+                MagicMock(choices=[MagicMock(delta=MagicMock(content="am a mock "))]),
+                MagicMock(choices=[MagicMock(delta=MagicMock(content="agent."))]),
             ]
-        else:
-            return {
-                "message": {
-                    "content": '{"thought": "Mock thought", "response": "Hello, I am a mock agent.", "tools_to_call": []}'
-                }
-            }
-    mock_client.chat = MagicMock(side_effect=mock_chat)
+        return MagicMock(
+            choices=[MagicMock(message=MagicMock(
+                content='{"thought": "Mock thought", "response": "Hello, I am a mock agent.", "tools_to_call": []}'
+            ))]
+        )
+    mock_client.chat.completions.create.side_effect = mock_chat_completion
     monkeypatch.setattr(shared, "local_client", mock_client)
+    monkeypatch.setattr(shared, "remote_client", mock_client)
 
     # 4. Re-initialize tables and the FAISS index for the fresh/empty database
     memory_engine.init_db()

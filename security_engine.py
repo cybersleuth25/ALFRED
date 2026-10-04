@@ -113,50 +113,64 @@ def _security_loop():
             detector.setInputSize((width, height))
             _, faces = detector.detect(frame)
             
-            if faces is not None and len(faces) > 0 and authorized_vector:
+            if faces is not None and len(faces) > 0:
                 face = faces[0]
-                aligned_face = recognizer.alignCrop(frame, face)
-                feature = recognizer.feature(aligned_face)
-                
-                # SFace cosine similarity (lowered threshold to 0.25 for better tolerance)
-                auth_arr = np.array(authorized_vector, dtype=np.float32).reshape(1, 128)
-                score = recognizer.match(auth_arr, feature, cv2.FaceRecognizerSF_FR_COSINE)
-                
-                print(f"[Security Engine] Face check score: {score:.3f}")
-                
-                if score >= 0.25:
-                    shared.face_present = True
-                    _unauthorized_strikes = 0  # Reset strikes
-                else:
-                    _unauthorized_strikes += 1
-                    print(f"[Security Engine] Low score warning ({_unauthorized_strikes}/3 strikes)")
+                # Calculate gaze / head pose orientation relative to webcam
+                try:
+                    re_x, le_x, nose_x = face[4], face[6], face[8]
+                    eye_dist = abs(le_x - re_x)
+                    if eye_dist > 5:
+                        offset_ratio = (nose_x - (re_x + le_x) / 2.0) / eye_dist
+                        shared.user_facing_camera = bool(abs(offset_ratio) < 0.22)
+                    else:
+                        shared.user_facing_camera = True
+                except Exception:
+                    shared.user_facing_camera = True
+
+                if authorized_vector:
+                    aligned_face = recognizer.alignCrop(frame, face)
+                    feature = recognizer.feature(aligned_face)
                     
-                    if _unauthorized_strikes == 1:
-                        # Take snapshot on first strike
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        incident_dir = os.path.join(os.path.dirname(__file__), "assets", "incidents")
-                        os.makedirs(incident_dir, exist_ok=True)
-                        img_path = os.path.join(incident_dir, f"incident_{timestamp}.jpg")
-                        cv2.imwrite(img_path, frame.copy())
+                    # SFace cosine similarity (lowered threshold to 0.25 for better tolerance)
+                    auth_arr = np.array(authorized_vector, dtype=np.float32).reshape(1, 128)
+                    score = recognizer.match(auth_arr, feature, cv2.FaceRecognizerSF_FR_COSINE)
+                    
+                    print(f"[Security Engine] Face check score: {score:.3f}")
+                    
+                    if score >= 0.25:
+                        shared.face_present = True
+                        _unauthorized_strikes = 0  # Reset strikes
+                    else:
+                        _unauthorized_strikes += 1
+                        print(f"[Security Engine] Low score warning ({_unauthorized_strikes}/3 strikes)")
                         
-                        # Add to unseen incidents list as just the filename for frontend fetching
-                        filename = f"incident_{timestamp}.jpg"
-                        if filename not in shared.unseen_incidents:
-                            shared.unseen_incidents.append(filename)
-                            shared.push_sentry_state()
-                            print(f"[Security Engine] Intruder snapshot saved: {filename}")
+                        if _unauthorized_strikes == 1:
+                            # Take snapshot on first strike
+                            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            incident_dir = os.path.join(os.path.dirname(__file__), "assets", "incidents")
+                            os.makedirs(incident_dir, exist_ok=True)
+                            img_path = os.path.join(incident_dir, f"incident_{timestamp}.jpg")
+                            cv2.imwrite(img_path, frame.copy())
                             
-                    if _unauthorized_strikes >= 3:
-                        shared.face_present = False
-                        
-                        # Security Lock Logic
-                        print(f"\n[Security] Unauthorized face confirmed! Locking PC.")
-                        subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False)
-                        
-                        # Sleep a bit longer after locking
-                        time.sleep(10)
+                            # Add to unseen incidents list as just the filename for frontend fetching
+                            filename = f"incident_{timestamp}.jpg"
+                            if filename not in shared.unseen_incidents:
+                                shared.unseen_incidents.append(filename)
+                                shared.push_sentry_state()
+                                print(f"[Security Engine] Intruder snapshot saved: {filename}")
+                                
+                        if _unauthorized_strikes >= 3:
+                            shared.face_present = False
+                            
+                            # Security Lock Logic
+                            print(f"\n[Security] Unauthorized face confirmed! Locking PC.")
+                            subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False)
+                            
+                            # Sleep a bit longer after locking
+                            time.sleep(10)
             else:
                 shared.face_present = False
+                shared.user_facing_camera = False
                 _unauthorized_strikes = 0 # If no face is detected at all, don't increase strikes (user walked away)
     finally:
         if cap is not None:

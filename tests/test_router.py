@@ -1,8 +1,9 @@
 import pytest
+import sys
+import types
 from unittest.mock import MagicMock
 import shared
 import llm_engine
-import study_mentor
 
 @pytest.fixture(autouse=True)
 def mock_router_dependencies(monkeypatch):
@@ -11,14 +12,26 @@ def mock_router_dependencies(monkeypatch):
     mock_execute_tool = MagicMock(return_value="Mocked tool execution successful")
     monkeypatch.setattr(llm_engine.core_tools, "execute_tool", mock_execute_tool)
 
-    # 2. Mock study_mentor daemon controls to prevent side effects (pycaw volume, webcam, screen monitoring)
+    # 2. Stub the lazily imported study_mentor module.  Loading the real module
+    # starts the voice stack, which is irrelevant to routing tests and makes
+    # collection needlessly slow.
     mock_activate = MagicMock(return_value="Focus Mode activated (mocked).")
     mock_deactivate = MagicMock(return_value="Focus Mode deactivated (mocked).")
     mock_is_active = MagicMock(return_value=False)
-    
-    monkeypatch.setattr(study_mentor, "activate", mock_activate)
-    monkeypatch.setattr(study_mentor, "deactivate", mock_deactivate)
-    monkeypatch.setattr(study_mentor, "is_active", mock_is_active)
+    mock_study_mentor = types.ModuleType("study_mentor")
+    mock_study_mentor.activate = mock_activate
+    mock_study_mentor.deactivate = mock_deactivate
+    mock_study_mentor.is_active = mock_is_active
+    monkeypatch.setitem(sys.modules, "study_mentor", mock_study_mentor)
+
+    test_persona = types.SimpleNamespace(
+        name="alfred",
+        display_name="Alfred",
+        honorific="sir",
+        personality_prompt="",
+        get_title=lambda user_name: f"Master {user_name}",
+    )
+    monkeypatch.setattr(llm_engine.persona_engine, "get_active_persona", lambda: test_persona)
 
     # Clean shared state variables
     shared.awaiting_study_confirmation = False
@@ -35,7 +48,7 @@ def mock_router_dependencies(monkeypatch):
 def test_canned_greetings():
     """Verify that greetings trigger instant zero-LLM canned responses."""
     resp = llm_engine.generate_response("hello")
-    assert any(greeting in resp for greeting in ["Good day", "Hello"])
+    assert resp.startswith(("Hey", "Hello"))
 
     resp_time = llm_engine.generate_response("what time is it")
     assert "sir" in resp_time
@@ -46,7 +59,7 @@ def test_focus_mode_lifecycle(mock_router_dependencies):
     """Test start focus mode intent, confirmation (yes/no), and stop focus mode."""
     # 1. Prompt to start focus mode -> should set confirmation state
     resp = llm_engine.generate_response("start focus mode")
-    assert "Shall I initiate Focus Mode" in resp
+    assert "Shall I initiate Protocol Omega" in resp
     assert shared.awaiting_study_confirmation is True
 
     # 2. Say yes to confirm Focus Mode initiation
@@ -58,7 +71,7 @@ def test_focus_mode_lifecycle(mock_router_dependencies):
     # 3. Requesting stop when focus mode is not active
     mock_router_dependencies["is_active"].return_value = False
     resp_stop_inactive = llm_engine.generate_response("stop focus mode")
-    assert "Focus Mode is not currently active" in resp_stop_inactive
+    assert "Protocol Omega is not currently active" in resp_stop_inactive
 
     # 4. Requesting stop when focus mode is active
     mock_router_dependencies["is_active"].return_value = True
@@ -107,7 +120,7 @@ def test_reminders_and_os_controls(mock_router_dependencies):
     # Reminder
     resp_remind = llm_engine.generate_response("remind me to drink water in 15 min")
     assert "remind you to drink water in 15 minutes" in resp_remind
-    mock_router_dependencies["execute_tool"].assert_any_call("set_dynamic_reminder", {"minutes": "15", "topic": "drink water"})
+    mock_router_dependencies["execute_tool"].assert_any_call("set_dynamic_reminder", {"minutes": 15, "topic": "drink water"})
 
     # Lock PC
     resp_lock = llm_engine.generate_response("lock my pc")
@@ -139,3 +152,18 @@ def test_fallback_to_agent_chat():
     resp = llm_engine.generate_response("write a song for me")
     # Should return our mocked response from conftest.py
     assert "Hello, I am a mock agent." in resp
+
+
+def test_stock_and_face_search_routing(mock_router_dependencies):
+    """Verify stock price, Chronos forecasting, and face search fast routing."""
+    # Stock quote
+    llm_engine.generate_response("stock price of reliance")
+    mock_router_dependencies["execute_tool"].assert_any_call("get_stock_quote", {"symbol": "reliance"})
+
+    # Stock forecast
+    llm_engine.generate_response("forecast reliance for 14 days")
+    mock_router_dependencies["execute_tool"].assert_any_call("forecast_stock", {"symbol": "reliance", "days": 14})
+
+    # Reverse face search
+    llm_engine.generate_response("reverse face search")
+    mock_router_dependencies["execute_tool"].assert_any_call("reverse_face_search", {"image_path": "camera"})

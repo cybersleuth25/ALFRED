@@ -1,4 +1,9 @@
-import React from 'react';
+export interface TrackedSubject {
+  id: number;
+  dwell: string;
+  dwell_seconds: number;
+  active: boolean;
+}
 
 interface SentryState {
   active: boolean;
@@ -8,6 +13,7 @@ interface SentryState {
   hidden: boolean;
   gesture: string;
   emotion: string;
+  tracked_subjects?: TrackedSubject[];
 }
 
 interface Props {
@@ -17,108 +23,149 @@ interface Props {
 export default function SentryDashboard({ sentry }: Props) {
   if (!sentry.active) return null;
 
-  const cardStyle: React.CSSProperties = {
-    // Flattened 3D skew for v3
-    boxShadow: '0 20px 40px rgba(0,0,0,0.5), inset 0 0 10px rgba(255,255,255,0.05)'
-  };
-
   const getThreatColor = (level: string) => {
     switch (level) {
-      case 'high': return 'text-red-500';
+      case 'high': return 'text-rose-500';
       case 'medium': return 'text-amber-500';
       default: return 'text-emerald-400';
     }
   };
 
   return (
-    <div className="absolute top-24 right-12 z-30 pointer-events-none transition-all duration-1000">
-      <div 
-        className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6 w-72 flex flex-col gap-4"
-        style={cardStyle}
-      >
-        <div className="flex items-center justify-between border-b border-white/10 pb-3" style={{ transform: 'translateZ(30px)' }}>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-[10px] tracking-[0.2em] font-light text-white/60 uppercase">Sentry Vision</span>
-          </div>
-          <span className="text-[10px] tracking-widest text-white/30 uppercase">LIVE HUD</span>
+    <div className="w-full max-w-6xl mx-auto flex flex-col gap-4 font-mono select-none">
+      
+      {/* Top Banner */}
+      <div className="panel p-3 flex items-center justify-between border-b border-[#1c2230] bg-[#0c0e14]">
+        <div className="flex items-center gap-2.5">
+          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+          <span className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
+            SENTRY VISION & PERIMETER SURVEILLANCE
+          </span>
         </div>
-
-        {/* Live Camera Feed */}
-        <div className="relative w-full h-32 bg-black rounded-lg overflow-hidden border border-white/5" style={{ transform: 'translateZ(35px)' }}>
-          <img 
-            src="http://localhost:8000/api/camera/feed" 
-            alt="Sentry Live Feed" 
-            className="w-full h-full object-cover opacity-80"
-          />
-          {/* Cyberpunk HUD Overlay */}
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute top-0 left-0 w-4 h-4 border-t border-l border-white/40" />
-            <div className="absolute top-0 right-0 w-4 h-4 border-t border-r border-white/40" />
-            <div className="absolute bottom-0 left-0 w-4 h-4 border-b border-l border-white/40" />
-            <div className="absolute bottom-0 right-0 w-4 h-4 border-b border-r border-white/40" />
-            <div className="absolute top-1/2 left-0 w-full h-[1px] bg-red-500/20 animate-pulse" />
-          </div>
+        <div className="flex items-center gap-3 text-[10px] text-zinc-500">
+          <span>AI MODEL: YUNET + SFACE</span>
+          <div className="w-px h-3 bg-[#222838]" />
+          <span>STATUS: REAL-TIME ACTIVE</span>
         </div>
+      </div>
 
-        <div className="grid grid-cols-2 gap-4 mt-2" style={{ transform: 'translateZ(40px)' }}>
-          {/* Threat Level */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[8px] tracking-[0.2em] text-white/30 uppercase">Threat Level</span>
-            <span className={`text-sm font-medium tracking-widest uppercase ${getThreatColor(sentry.threat_level)}`}>
-              {sentry.threat_level}
-            </span>
+      {/* Main Grid: 2 Columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        
+        {/* Left 2 Cols: Large Live Video Feed */}
+        <div className="lg:col-span-2 panel p-3 bg-[#0c0e14] flex flex-col gap-2">
+          <div className="flex items-center justify-between text-[10px] text-zinc-400 border-b border-[#1c2230] pb-1.5">
+            <span>LIVE CAMERA STREAM [DSHOW // DEVICE 0]</span>
+            <span className="text-emerald-400">FEED ACTIVE</span>
           </div>
 
-          {/* Emotion */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[8px] tracking-[0.2em] text-white/30 uppercase">Detected Emotion</span>
-            <span className="text-sm font-medium text-cyan-400 tracking-widest uppercase">
-              {sentry.emotion}
-            </span>
-          </div>
-
-          {/* Persons Detected */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[8px] tracking-[0.2em] text-white/30 uppercase">Entities</span>
-            <span className="text-sm font-medium text-white/80">
-              {sentry.persons} <span className="text-[10px] text-white/40">detected</span>
-            </span>
-          </div>
-
-          {/* Hidden Status */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[8px] tracking-[0.2em] text-white/30 uppercase">Target Status</span>
-            <span className={`text-sm font-medium tracking-widest uppercase ${sentry.hidden ? 'text-amber-400' : 'text-emerald-400/60'}`}>
-              {sentry.hidden ? 'HIDDEN' : 'VISIBLE'}
-            </span>
-          </div>
-        </div>
-
-        {/* Threat Score Bar */}
-        <div className="mt-2" style={{ transform: 'translateZ(20px)' }}>
-          <div className="flex justify-between mb-1">
-            <span className="text-[8px] tracking-[0.2em] text-white/30 uppercase">Threat Score</span>
-            <span className="text-[8px] text-white/50">{Math.round(sentry.threat_score)}%</span>
-          </div>
-          <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
-            <div 
-              className={`h-full transition-all duration-500 ${
-                sentry.threat_score > 70 ? 'bg-red-500' : sentry.threat_score > 30 ? 'bg-amber-500' : 'bg-emerald-400'
-              }`}
-              style={{ width: `${sentry.threat_score}%` }}
+          <div className="relative w-full aspect-video bg-[#050608] border border-[#1e2434] overflow-hidden flex items-center justify-center">
+            <img 
+              src="/api/camera/feed" 
+              alt="Sentry Live Feed" 
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                // If camera image fails to stream, show standby placeholder
+                (e.target as HTMLElement).style.display = 'none';
+              }}
             />
+
+            {/* Tactical Vector Brackets */}
+            <div className="absolute inset-2 pointer-events-none border border-zinc-800">
+              <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-400" />
+              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyan-400" />
+              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyan-400" />
+              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-400" />
+            </div>
+
+            {/* Gesture Badge */}
+            {sentry.gesture && (
+              <div className="absolute top-4 left-4 bg-[#0e1118] border border-cyan-500 px-3 py-1 text-xs text-cyan-300 font-bold uppercase">
+                GESTURE: {sentry.gesture}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Gesture Indicator */}
-        {sentry.gesture && (
-          <div className="absolute -left-4 -top-4 w-12 h-12 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 animate-bounce shadow-[0_0_15px_rgba(255,255,255,0.2)]" style={{ transform: 'translateZ(50px)' }}>
-            <span className="text-xl">
-              {sentry.gesture === 'palm' ? '✋' : sentry.gesture === 'fist' ? '✊' : sentry.gesture === 'ok' ? '👌' : ''}
-            </span>
+        {/* Right Col: Threat Telemetry & Tracked Entities */}
+        <div className="panel p-4 bg-[#0c0e14] flex flex-col gap-4">
+          <span className="text-xs font-bold text-zinc-300 border-b border-[#1c2230] pb-2">
+            THREAT TELEMETRY
+          </span>
+
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="p-2.5 bg-[#121520] border border-[#1e2434] rounded flex flex-col gap-0.5">
+              <span className="text-[9px] text-zinc-500 uppercase">THREAT LEVEL</span>
+              <span className={`font-bold tracking-wider uppercase ${getThreatColor(sentry.threat_level)}`}>
+                {sentry.threat_level}
+              </span>
+            </div>
+
+            <div className="p-2.5 bg-[#121520] border border-[#1e2434] rounded flex flex-col gap-0.5">
+              <span className="text-[9px] text-zinc-500 uppercase">ENTITIES COUNT</span>
+              <span className="font-bold text-zinc-200">
+                {sentry.persons} DETECTED
+              </span>
+            </div>
+
+            <div className="p-2.5 bg-[#121520] border border-[#1e2434] rounded flex flex-col gap-0.5">
+              <span className="text-[9px] text-zinc-500 uppercase">FACIAL EMOTION</span>
+              <span className="font-bold text-cyan-400 uppercase">
+                {sentry.emotion || 'NEUTRAL'}
+              </span>
+            </div>
+
+            <div className="p-2.5 bg-[#121520] border border-[#1e2434] rounded flex flex-col gap-0.5">
+              <span className="text-[9px] text-zinc-500 uppercase">OPERATOR PRESENCE</span>
+              <span className={`font-bold uppercase ${sentry.hidden ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {sentry.hidden ? 'AWAY' : 'PRESENT'}
+              </span>
+            </div>
           </div>
-        )}
+
+          {/* Threat Score Bar */}
+          <div className="flex flex-col gap-1.5 pt-1">
+            <div className="flex justify-between text-[10px]">
+              <span className="text-zinc-500">THREAT PROBABILITY</span>
+              <span className="text-zinc-300 font-bold">{Math.round(sentry.threat_score)}%</span>
+            </div>
+            <div className="w-full bg-[#141824] h-2 border border-[#202738] overflow-hidden">
+              <div 
+                className={`h-full transition-all duration-300 ${
+                  sentry.threat_score > 70 ? 'bg-rose-500' : sentry.threat_score > 35 ? 'bg-amber-500' : 'bg-emerald-500'
+                }`}
+                style={{ width: `${sentry.threat_score}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Tracked Subjects Table */}
+          <div className="flex flex-col gap-2 pt-2 border-t border-[#1c2230]">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-zinc-400 font-bold uppercase">TRACKED ENTITIES</span>
+              <span className="text-zinc-500">{sentry.tracked_subjects?.length || 0} active</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+              {sentry.tracked_subjects && sentry.tracked_subjects.length > 0 ? (
+                sentry.tracked_subjects.map((sub) => (
+                  <div 
+                    key={sub.id}
+                    className="p-2 bg-[#121520] border border-[#1e2434] rounded flex items-center justify-between text-xs"
+                  >
+                    <span className="text-zinc-300 font-semibold">Subject #{sub.id}</span>
+                    <span className="text-cyan-400 text-[10px]">DWELL: {sub.dwell}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-[10px] text-zinc-600 italic py-2">
+                  No active unidentified subjects in field of view.
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
   );

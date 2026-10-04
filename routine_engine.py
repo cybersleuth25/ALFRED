@@ -297,7 +297,7 @@ Schema:
   ]
 }}
 
-Available Tools: check_weather, get_news (topic), list_reminders, play_music (song_query), get_now_playing, spotify_pause, spotify_resume, spotify_skip, send_whatsapp (contact_name, message), get_earthquakes, search_web (query), launch_application (app_name).
+Available Tools: check_weather, get_news (topic), list_reminders, get_calendar_events (days), play_music (song_query), get_now_playing, spotify_pause, spotify_resume, spotify_skip, send_whatsapp (contact_name, message), get_earthquakes, search_web (query), launch_application (app_name).
 """
 
     try:

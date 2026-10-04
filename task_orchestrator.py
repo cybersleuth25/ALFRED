@@ -40,16 +40,21 @@ AGENT_TOOL_MAP = {
         "analyze_screen", "get_screen_info", "mouse_move_and_click",
         "keyboard_type", "keyboard_press", "keyboard_hotkey", "learn_new_skill",
         "read_screen_text", "locate_object_in_camera", "locate_object_on_screen",
+        "git_status_diff", "git_smart_commit", "scan_leaked_secrets",
+        "clean_dev_workspace", "run_terminal_command", "meeting_notetaker",
     ],
     "memory": [
         "set_dynamic_reminder", "add_reminder", "list_reminders", "complete_reminder",
         "delete_reminder", "clear_all_reminders", "remember_fact", "forget_fact",
         "journal_entry", "read_journal", "query_library", "recall_memories",
         "query_knowledge_graph", "extract_knowledge_from_text",
+        "get_calendar_events", "create_calendar_event", "delete_calendar_event",
+        "detect_schedule_conflicts", "find_focus_slots", "get_daily_executive_dossier", "get_quick_agenda",
     ],
     "communications": [
-        "send_whatsapp",
+        "send_whatsapp", "get_unread_emails", "triage_inbox", "draft_email_reply",
     ],
+
     "browser": [
         "list_browser_tabs", "close_browser_tab", "switch_browser_tab",
         "open_browser_tab", "read_browser_tab",
