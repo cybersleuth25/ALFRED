@@ -188,8 +188,35 @@ def launch_application(app_name: str) -> str:
     
     # Very heavy synonym map to catch LLM typos and common intents
     app_map = {
-        'spotify': ['spotify', 'spotify:'],
-        'spotifi': ['spotify', 'spotify:'], 
+        'spotify': ['spotify:', 'spotify'],
+        'spotifi': ['spotify:', 'spotify'], 
+        'antigravity': [
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe'),
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe'),
+            'antigravity-ide',
+            'antigravity'
+        ],
+        'antygravity': [
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe'),
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe'),
+            'antigravity-ide',
+            'antigravity'
+        ],
+        'antigravity ide': [
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe'),
+            os.path.expandvars(r'%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe'),
+            'antigravity-ide',
+            'antigravity'
+        ],
+        'chatgpt': ['https://chatgpt.com'],
+        'chat gpt': ['https://chatgpt.com'],
+        'claude': ['https://claude.ai'],
+        'claud': ['https://claude.ai'],
+        'claude ai': ['https://claude.ai'],
+        'code': ['code', os.path.expandvars(r'%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe'), 'vscode:'],
+        'vs code': ['code', os.path.expandvars(r'%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe'), 'vscode:'],
+        'vscode': ['code', os.path.expandvars(r'%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe'), 'vscode:'],
+        'cursor': ['cursor', os.path.expandvars(r'%LOCALAPPDATA%\Programs\cursor\Cursor.exe')],
         'chrome': ['chrome'],
         'google chrome': ['chrome'],
         'notepad': ['notepad'],
@@ -215,13 +242,33 @@ def launch_application(app_name: str) -> str:
                 subprocess.run(['taskkill', '/F', '/IM', proc_name], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 import time as _time; _time.sleep(2)
             for target in targets:
-                os.startfile(target, arguments=f'--remote-debugging-port={port}')
-            return f"Launch signal sent for {app_name} (with tab control enabled on port {port})."
-        
+                try:
+                    os.startfile(target, arguments=f'--remote-debugging-port={port}')
+                    return f"Launch signal sent for {app_name} (with tab control enabled on port {port})."
+                except Exception:
+                    continue
+
+        launched = False
+        last_error = None
         for target in targets:
-            os.startfile(target)
+            try:
+                if isinstance(target, str) and (target.startswith('http://') or target.startswith('https://')):
+                    import webbrowser
+                    webbrowser.open(target)
+                    launched = True
+                    break
+                if os.path.isabs(target) and not os.path.exists(target):
+                    continue
+                os.startfile(target)
+                launched = True
+                break
+            except Exception as e:
+                last_error = e
+                continue
             
-        return f"Launch signal sent for {app_name}."
+        if launched:
+            return f"Launch signal sent for {app_name}."
+        return f"Failed to send launch signal for {app_name}. Error: {last_error}"
     except Exception as e:
         return f"Failed to send launch signal for {app_name}. Error: {e}"
 
