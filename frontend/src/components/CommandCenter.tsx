@@ -33,8 +33,6 @@ export default function CommandCenter({ active, focusState, lockdown, onClose }:
     if (active) {
       // Small delay to trigger CSS animation
       requestAnimationFrame(() => setMounted(true));
-    } else {
-      setMounted(false);
     }
   }, [active]);
 

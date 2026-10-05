@@ -123,7 +123,9 @@ export default function FocusPanel({ focusState, lockdown }: FocusPanelProps) {
         const r = await fetch('/api/focus/stats');
         const d = await r.json();
         if (d.stats) setStats(d.stats);
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchStats();
     const interval = setInterval(fetchStats, 30000);
@@ -151,7 +153,9 @@ export default function FocusPanel({ focusState, lockdown }: FocusPanelProps) {
         const r = await fetch('/api/focus/heatmap');
         const d = await r.json();
         if (d.heatmap) setHeatmap(d.heatmap);
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchHeatmap();
     const interval = setInterval(fetchHeatmap, 60000);
@@ -166,20 +170,27 @@ export default function FocusPanel({ focusState, lockdown }: FocusPanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'toggle' })
       });
-    } catch {}
+    } catch {
+      setToggling(false);
+      return;
+    }
     setTimeout(() => setToggling(false), 1000);
   };
 
   const handleBreak = async () => {
     try {
       await fetch('/api/focus/break', { method: 'POST' });
-    } catch {}
+    } catch {
+      return;
+    }
   };
 
   const handleLockdown = async () => {
     try {
       await fetch('/api/focus/lockdown', { method: 'POST' });
-    } catch {}
+    } catch {
+      return;
+    }
   };
 
   const isActive = focusState?.active ?? false;

@@ -30,9 +30,10 @@ export const TacticalCore: React.FC<TacticalCoreProps> = ({
       const pTimer = setInterval(() => {
         setPulse(0.85 + Math.random() * 0.3);
       }, 100);
-      return () => clearInterval(pTimer);
-    } else {
-      setPulse(1);
+      return () => {
+        clearInterval(pTimer);
+        setPulse(1);
+      };
     }
   }, [state]);
 
@@ -181,7 +182,7 @@ export const TacticalCore: React.FC<TacticalCoreProps> = ({
             {[35, 60, 45, 80, 50, 95, 70, 100, 85, 65, 90, 40, 75, 55, 30, 45].map((val, idx) => {
               const active = isSpeaking || isListening;
               const barHeight = active
-                ? Math.max(15, Math.min(100, val * (Math.sin(Date.now() / 150 + idx * 0.8) + 1.2) * 0.5))
+                ? Math.max(15, Math.min(100, val * (Math.sin(rotation / 10 + idx * 0.8) + 1.2) * 0.5))
                 : 15;
               return (
                 <div

@@ -14,7 +14,9 @@ export default function OsintPanel() {
         setNews(data.news || []);
         setQuakes(data.earthquakes || []);
         if (data.updated) setUpdated(data.updated.slice(0, 5));
-      } catch {}
+      } catch {
+        setLoading(false);
+      }
       setLoading(false);
     };
     fetchData();

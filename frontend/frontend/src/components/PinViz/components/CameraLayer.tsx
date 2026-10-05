@@ -34,13 +34,14 @@ export function CameraLayer() {
         }
         setStatus('active');
         const video = handTracker.getVideoElement();
-        if (video && bgRef.current) {
+        const background = bgRef.current;
+        if (video && background) {
           video.style.width = '100%';
           video.style.height = '100%';
           video.style.objectFit = 'cover';
           // Mirror so the user sees themselves naturally (matches the mirrored landmarks).
           video.style.transform = 'scaleX(-1)';
-          bgRef.current.appendChild(video);
+          background.appendChild(video);
         }
       } catch (err) {
         if (cancelled) return;
@@ -54,19 +55,23 @@ export function CameraLayer() {
       }
     })();
 
+    const background = bgRef.current;
     return () => {
       cancelled = true;
       handTracker.stop();
-      if (bgRef.current) bgRef.current.replaceChildren();
+      if (background) background.replaceChildren();
     };
   }, [enabled, setStatus]);
 
   // Auto-dismiss the gesture cheat sheet after a few seconds.
   useEffect(() => {
     if (status !== 'active') return;
-    setShowHint(true);
+    const frame = requestAnimationFrame(() => setShowHint(true));
     const t = setTimeout(() => setShowHint(false), 7000);
-    return () => clearTimeout(t);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(t);
+    };
   }, [status]);
 
   return (

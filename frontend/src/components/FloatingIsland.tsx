@@ -15,6 +15,36 @@ interface FloatingIslandProps {
   sentryActive?: boolean;
 }
 
+interface AcousticStatus {
+  active?: boolean;
+  ambient_rms?: number;
+}
+
+interface ScreenAnalysis {
+  success?: boolean;
+  analysis?: string;
+  window?: { title: string; process: string };
+}
+
+interface DebriefMetrics {
+  focus_minutes?: number;
+  focus_goal_minutes?: number;
+  study_streak_days?: number;
+  completed_tasks?: unknown[];
+  security_incidents_count?: number;
+}
+
+interface DebriefData {
+  success?: boolean;
+  timestamp?: string;
+  spoken_text?: string;
+  metrics?: DebriefMetrics;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
+}
+
 export const FloatingIsland: React.FC<FloatingIslandProps> = ({
   orbState,
   persona,
@@ -24,15 +54,15 @@ export const FloatingIsland: React.FC<FloatingIslandProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [screenModalOpen, setScreenModalOpen] = useState(false);
-  const [screenAnalysis, setScreenAnalysis] = useState<any>(null);
+  const [screenAnalysis, setScreenAnalysis] = useState<ScreenAnalysis | null>(null);
   const [screenLoading, setScreenLoading] = useState(false);
 
   const [debriefModalOpen, setDebriefModalOpen] = useState(false);
-  const [debriefData, setDebriefData] = useState<any>(null);
+  const [debriefData, setDebriefData] = useState<DebriefData | null>(null);
   const [debriefLoading, setDebriefLoading] = useState(false);
 
   const [acousticActive, setAcousticActive] = useState(false);
-  const [acousticStatus, setAcousticStatus] = useState<any>(null);
+  const [acousticStatus, setAcousticStatus] = useState<AcousticStatus | null>(null);
 
   // Poll acoustic status
   useEffect(() => {
@@ -40,11 +70,13 @@ export const FloatingIsland: React.FC<FloatingIslandProps> = ({
       try {
         const res = await fetch('/api/acoustic/status');
         if (res.ok) {
-          const d = await res.json();
+          const d = await res.json() as AcousticStatus;
           setAcousticStatus(d);
-          setAcousticActive(d.active);
+          setAcousticActive(d.active ?? false);
         }
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchAcoustic();
     const iv = setInterval(fetchAcoustic, 4000);
@@ -60,10 +92,10 @@ export const FloatingIsland: React.FC<FloatingIslandProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: "What is on my screen?", mode })
       });
-      const data = await res.json();
+      const data = await res.json() as ScreenAnalysis;
       setScreenAnalysis(data);
-    } catch (e: any) {
-      setScreenAnalysis({ success: false, analysis: "Error connecting to Screen Co-Pilot: " + e.message });
+    } catch (error: unknown) {
+      setScreenAnalysis({ success: false, analysis: "Error connecting to Screen Co-Pilot: " + getErrorMessage(error) });
     } finally {
       setScreenLoading(false);
     }
@@ -78,10 +110,10 @@ export const FloatingIsland: React.FC<FloatingIslandProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ speak: true })
       });
-      const data = await res.json();
+      const data = await res.json() as DebriefData;
       setDebriefData(data);
-    } catch (e: any) {
-      setDebriefData({ success: false, spoken_text: "Debrief failed to generate: " + e.message });
+    } catch (error: unknown) {
+      setDebriefData({ success: false, spoken_text: "Debrief failed to generate: " + getErrorMessage(error) });
     } finally {
       setDebriefLoading(false);
     }

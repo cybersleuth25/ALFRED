@@ -27,11 +27,51 @@ const PRESETS = {
   speaking:   { color: "#aabbff", edgeColor: "#ddeeff", speed: 0.2,  innerSpeed: 0.5,  pulse: 0.025, edgeOpacity: 0.9 },
 } as const;
 
+function createPrng(seed = 42) {
+  let s = seed;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+const MOTE_COUNT = 300;
+
+function createMotePos(count: number) {
+  const rand = createPrng(42);
+  const pos = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = 5 + rand() * 6;
+    const theta = rand() * Math.PI * 2;
+    const phi = Math.acos(2 * rand() - 1);
+    pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+    pos[i * 3 + 2] = r * Math.cos(phi);
+    rand();
+  }
+  return pos;
+}
+
+function createMoteVel(count: number) {
+  const rand = createPrng(42);
+  const vel = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = 5 + rand() * 6;
+    const theta = rand() * Math.PI * 2;
+    rand();
+    vel[i * 3] = r;
+    vel[i * 3 + 1] = theta;
+    vel[i * 3 + 2] = 0.0001 + rand() * 0.0002;
+  }
+  return vel;
+}
+
 export default function Sentinel({ state }: SentinelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const innerRef = useRef<THREE.Mesh>(null);
   const outerRef = useRef<THREE.LineSegments>(null);
   const motesRef = useRef<THREE.Points>(null);
+  const velRef = useRef<Float32Array | null>(null);
 
   const lerped = useRef({
     color: new THREE.Color("#77aaff"),
@@ -49,24 +89,8 @@ export default function Sentinel({ state }: SentinelProps) {
     return new THREE.EdgesGeometry(geo);
   }, []);
 
-  // Sparse orbital motes
-  const moteCount = 300;
-  const moteData = useMemo(() => {
-    const pos = new Float32Array(moteCount * 3);
-    const vel = new Float32Array(moteCount * 3);
-    for (let i = 0; i < moteCount; i++) {
-      const r = 5 + Math.random() * 6;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      pos[i * 3 + 2] = r * Math.cos(phi);
-      vel[i * 3] = r;
-      vel[i * 3 + 1] = theta;
-      vel[i * 3 + 2] = 0.0001 + Math.random() * 0.0002;
-    }
-    return { pos, vel };
-  }, []);
+  // Sparse orbital motes initial positions
+  const moteInitialPos = useMemo(() => createMotePos(MOTE_COUNT), []);
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
@@ -119,18 +143,22 @@ export default function Sentinel({ state }: SentinelProps) {
 
     // Motes — slow drift
     if (motesRef.current) {
-      const P = moteData.pos;
-      const V = moteData.vel;
-      for (let i = 0; i < moteCount; i++) {
+      if (!velRef.current) {
+        velRef.current = createMoteVel(MOTE_COUNT);
+      }
+      const posAttr = motesRef.current.geometry.attributes.position;
+      const P = posAttr.array as Float32Array;
+      const V = velRef.current;
+      for (let i = 0; i < MOTE_COUNT; i++) {
         const r = V[i * 3];
         V[i * 3 + 1] += V[i * 3 + 2] + L.speed * 0.004;
         const theta = V[i * 3 + 1];
-        const phi = Math.acos(((i / moteCount) * 2 - 1) * 0.9);
+        const phi = Math.acos(((i / MOTE_COUNT) * 2 - 1) * 0.9);
         P[i * 3] = r * Math.sin(phi) * Math.cos(theta);
         P[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.6;
         P[i * 3 + 2] = r * Math.cos(phi);
       }
-      motesRef.current.geometry.attributes.position.needsUpdate = true;
+      posAttr.needsUpdate = true;
       const mat = motesRef.current.material as THREE.PointsMaterial;
       mat.color.copy(L.edgeColor);
     }
@@ -164,8 +192,8 @@ export default function Sentinel({ state }: SentinelProps) {
       {/* Sparse ambient motes */}
       <points ref={motesRef}>
         <bufferGeometry>
-          {/* @ts-ignore */}
-          <bufferAttribute attach="attributes-position" count={moteCount} array={moteData.pos} itemSize={3} />
+          {/* @ts-expect-error Three.js bufferAttribute attach */}
+          <bufferAttribute attach="attributes-position" count={MOTE_COUNT} array={moteInitialPos} itemSize={3} />
         </bufferGeometry>
         <pointsMaterial
           color="#ccddff"

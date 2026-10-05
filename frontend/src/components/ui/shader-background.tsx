@@ -22,30 +22,7 @@ function hexToRgb(hex: string): [number, number, number] {
   ];
 }
 
-const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: ShaderBackgroundProps) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const personaColorRef = useRef(personaColor);
-  useEffect(() => {
-    personaColorRef.current = personaColor;
-  }, [personaColor]);
-  
-  // Add an artificial delay to the speaking state to sync with Edge TTS audio download latency
-  const [delayedState, setDelayedState] = useState(state);
-  useEffect(() => {
-    if (state === 'speaking') {
-      const timer = setTimeout(() => setDelayedState('speaking'), 800); // 800ms delay for audio sync
-      return () => clearTimeout(timer);
-    } else {
-      setDelayedState(state);
-    }
-  }, [state]);
-
-  const stateRef = useRef(delayedState);
-  useEffect(() => {
-    stateRef.current = delayedState;
-  }, [delayedState]);
-
-  const vsSource = `
+const vsSource = `
     attribute vec4 aVertexPosition;
     void main() {
       gl_Position = aVertexPosition;
@@ -254,6 +231,36 @@ const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: S
     return shaderProgram;
   };
 
+const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: ShaderBackgroundProps) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const personaColorRef = useRef(personaColor);
+  useEffect(() => {
+    personaColorRef.current = personaColor;
+  }, [personaColor]);
+
+  const faceXRef = useRef(face_x);
+  const faceYRef = useRef(face_y);
+  useEffect(() => {
+    faceXRef.current = face_x;
+    faceYRef.current = face_y;
+  }, [face_x, face_y]);
+
+  // Add an artificial delay to the speaking state to sync with Edge TTS audio download latency
+  const [delayedState, setDelayedState] = useState(state);
+  useEffect(() => {
+    if (state === 'speaking') {
+      const timer = setTimeout(() => setDelayedState('speaking'), 800); // 800ms delay for audio sync
+      return () => clearTimeout(timer);
+    } else {
+      setDelayedState(state);
+    }
+  }, [state]);
+
+  const stateRef = useRef(delayedState);
+  useEffect(() => {
+    stateRef.current = delayedState;
+  }, [delayedState]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -309,7 +316,7 @@ const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: S
     };
 
     let currentAmplitude = 0.0;
-    let startTime = Date.now();
+    const startTime = Date.now();
     let animationFrameId: number;
     let lastTime = Date.now();
     let mouseX = 0.5;
@@ -337,7 +344,7 @@ const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: S
          const v1 = Math.sin(currentTime * 4.0);
          const v2 = Math.sin(currentTime * 7.5);
          const v3 = Math.sin(currentTime * 2.5);
-         let vol = (v1 * 0.5 + v2 * 0.3 + v3 * 0.2);
+         const vol = (v1 * 0.5 + v2 * 0.3 + v3 * 0.2);
          targetAmplitude = Math.max(0, vol * 1.5);
       }
       
@@ -360,8 +367,8 @@ const ShaderBackground = ({ state, face_x, face_y, personaColor = "#d4a956" }: S
       }
 
       // Face tracking or mouse fallback
-      let currentMouseX = face_x !== undefined ? face_x : mouseX;
-      let currentMouseY = face_y !== undefined ? 1.0 - face_y : mouseY;
+      const currentMouseX = faceXRef.current !== undefined ? faceXRef.current : mouseX;
+      const currentMouseY = faceYRef.current !== undefined ? 1.0 - faceYRef.current : mouseY;
 
       gl.uniform2f(programInfo.uniformLocations.mouse, currentMouseX, currentMouseY);
       

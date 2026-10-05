@@ -41,11 +41,13 @@ export default function MeetingNotetaker({ personaColor }: MeetingNotetakerProps
         if (res.ok) {
           const data: MeetingState = await res.json();
           setMeetingState(data);
-          if (data.active && data.title && !titleInput) {
-            setTitleInput(data.title);
+          if (data.active && data.title) {
+            setTitleInput(current => current || data.title);
           }
         }
-      } catch (err) {}
+      } catch {
+        return;
+      }
     };
 
     fetchStatus();
@@ -61,7 +63,9 @@ export default function MeetingNotetaker({ personaColor }: MeetingNotetakerProps
         const data = await res.json();
         setHistory(data.meetings || []);
       }
-    } catch (err) {}
+    } catch {
+      return;
+    }
   };
 
   useEffect(() => {
@@ -70,7 +74,7 @@ export default function MeetingNotetaker({ personaColor }: MeetingNotetakerProps
 
   // Timer counter for active recording
   useEffect(() => {
-    let timer: any;
+    let timer: ReturnType<typeof setInterval> | undefined;
     if (meetingState.active) {
       timer = setInterval(() => {
         setMeetingState(prev => ({
@@ -79,7 +83,9 @@ export default function MeetingNotetaker({ personaColor }: MeetingNotetakerProps
         }));
       }, 1000);
     }
-    return () => clearInterval(timer);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [meetingState.active]);
 
   const handleStart = async () => {

@@ -2,6 +2,8 @@ import { useRef, useMemo, useEffect, useState } from "react";
 import { useFrame, Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitControls, Html, Line } from "@react-three/drei";
+import type { Line2 } from "three/examples/jsm/lines/Line2.js";
+import type { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 
 interface GeoMarker {
@@ -273,7 +275,7 @@ function GeoLaserPin({ marker, radius = GLOBE_RADIUS }: { marker: GeoMarker; rad
 
 /* ── Flight Arc ── */
 function HolographicFlightArc({ startGeo, endGeo, radius = GLOBE_RADIUS }: { startGeo: GeoMarker; endGeo: GeoMarker; radius?: number }) {
-  const lineRef = useRef<any>(null);
+  const lineRef = useRef<Line2>(null);
 
   const curve = useMemo(() => {
     const start = latLngToVec3(startGeo.lat, startGeo.lng, radius);
@@ -288,7 +290,8 @@ function HolographicFlightArc({ startGeo, endGeo, radius = GLOBE_RADIUS }: { sta
 
   useFrame((_, delta) => {
     if (lineRef.current?.material) {
-      lineRef.current.material.dashOffset -= delta * 0.5;
+      const material = lineRef.current.material as LineMaterial;
+      material.dashOffset -= delta * 0.5;
     }
   });
 
