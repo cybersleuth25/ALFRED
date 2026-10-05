@@ -58,8 +58,8 @@ ASSISTANT_COMMAND_PATTERNS = [
     r'^(play|open|launch|start|stop|pause|resume|skip|remind|set|search|show|switch|lock|mute|unmute)\b',
     # Hindi / Hinglish Action Verbs
     r'\b(chalao|bajao|sunao|karo|batao|dikhao|lagao|rok do|band karo|shuru karo|badlo)\b',
-    r'^(kaise ho|namaste|kya haal|shukriya|dhanyawad|so jao|aaram karo|chup ho jao)\b',
-    r'\b(mera gaana|mere gaane|daily gaane|spotify|weather|briefing|routine)\b',
+    r'\b(mera gaana|mere gaane|daily gaane|spotify|weather|briefing|routine|start work|open work|work mode)\b',
+    r'^(i am going to|i\'m going to|time to|let\'s|let us)\s+(?:start\s+)?work\b',
 ]
 
 # Follow-up conversational window in seconds (after Alfred finishes answering)

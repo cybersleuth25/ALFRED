@@ -66,11 +66,68 @@ DEFAULT_ROUTINES = [
         ]
     },
     {
+        "name": "work_mode",
+        "display_name": "Work Workspace Protocol",
+        "trigger_phrases": [
+            "start work",
+            "i am going to start work",
+            "going to start work",
+            "open work",
+            "work mode",
+            "start working",
+            "time for work",
+            "time to work",
+            "open my work",
+            "open workspace",
+            "prepare my workspace",
+            "let's work",
+            "begin work",
+            "deploy mode",
+            "coding mode",
+            "dev mode"
+            "Let's get to work"
+            "lets get to work"
+            "Time for work"
+            "Time to code"
+        ],
+        "description": "Work setup: launches Antigravity, Spotify, ChatGPT, Claude, and code editor, then initiates focus tracking.",
+        "steps": [
+            {
+                "type": "speak",
+                "text": "Work mode initiated. Opening Antigravity, Spotify, ChatGPT, Claude, and your workspace, sir."
+            },
+            {
+                "type": "app",
+                "app": "antigravity"
+            },
+            {
+                "type": "app",
+                "app": "spotify"
+            },
+            {
+                "type": "app",
+                "app": "chatgpt"
+            },
+            {
+                "type": "app",
+                "app": "claude"
+            },
+            {
+                "type": "app",
+                "app": "code"
+            },
+            {
+                "type": "state",
+                "target": "focus",
+                "action": "start"
+            }
+        ]
+    },
+    {
         "name": "deploy_mode",
         "display_name": "Deploy / Work Mode",
         "trigger_phrases": [
-            "deploy mode", "start deploy mode", "engage deploy mode",
-            "work mode", "coding mode", "dev mode"
+            "deploy mode", "start deploy mode", "engage deploy mode"
         ],
         "description": "Developer setup: launches code editor, plays synthwave focus tracks, and initiates focus tracking.",
         "steps": [
@@ -80,7 +137,15 @@ DEFAULT_ROUTINES = [
             },
             {
                 "type": "app",
+                "app": "antigravity"
+            },
+            {
+                "type": "app",
                 "app": "code"
+            },
+            {
+                "type": "app",
+                "app": "spotify"
             },
             {
                 "type": "tool",
@@ -98,7 +163,7 @@ DEFAULT_ROUTINES = [
         "name": "focus_session",
         "display_name": "Focus Session",
         "trigger_phrases": [
-            "start focus session", "study session", "focus session", "deep work mode"
+            "start focus session", "study session", "focus session", "deep work mode", "Time to focus"
         ],
         "description": "Engages Protocol Omega focus tracking, pomodoro timer, and concentration music.",
         "steps": [
@@ -145,18 +210,16 @@ DEFAULT_ROUTINES = [
 
 
 def init_default_routines():
-    """Initializes the built-in routines in SQLite if they don't already exist."""
+    """Initializes and updates built-in routines in SQLite."""
     for routine in DEFAULT_ROUTINES:
-        existing = memory_engine.get_routine(routine["name"])
-        if not existing:
-            memory_engine.save_routine(
-                name=routine["name"],
-                display_name=routine["display_name"],
-                trigger_phrases=routine["trigger_phrases"],
-                description=routine["description"],
-                steps=routine["steps"],
-                is_builtin=True
-            )
+        memory_engine.save_routine(
+            name=routine["name"],
+            display_name=routine["display_name"],
+            trigger_phrases=routine["trigger_phrases"],
+            description=routine["description"],
+            steps=routine["steps"],
+            is_builtin=True
+        )
     print(f"[Routines] System default routines verified ({len(DEFAULT_ROUTINES)} active).")
 
 
@@ -165,17 +228,42 @@ def match_voice_trigger(transcript: str) -> dict:
     Checks if the user's transcript matches any routine trigger phrase.
     Returns the matched routine dict or None.
     """
+    if not transcript or not transcript.strip():
+        return None
+
+    import re
     lower = transcript.lower().strip()
+    # Strip common leading assistant wake addresses ("alfred, i am going to start work" -> "i am going to start work")
+    cleaned = re.sub(r'^(?:alfred|jarvis|friday|hey alfred|ok alfred|computer)[,\s]+', '', lower).strip()
+
     routines = memory_engine.get_all_routines()
 
     for r in routines:
         # Check explicit routine name (e.g. "run morning_protocol" or "morning protocol")
-        if r["name"].replace("_", " ") in lower or r["display_name"].lower() in lower:
+        r_name = r["name"].replace("_", " ")
+        r_disp = r["display_name"].lower()
+        if r_name in lower or r_disp in lower or r_name in cleaned or r_disp in cleaned:
             return r
         # Check custom triggers
         for trigger in r.get("trigger_phrases", []):
-            if trigger.lower() in lower:
+            t_low = trigger.lower()
+            if t_low in lower or t_low in cleaned:
                 return r
+
+    # ── Semantic regex intent matching for Work Mode ──
+    work_regexes = [
+        r'\b(?:going to\s+|gonna\s+)?start\s+work(?:ing)?\b',
+        r'\b(?:open|launch|prepare)\s+(?:my\s+)?(?:work|workspace)\b',
+        r'\btime\s+(?:for|to)\s+work\b',
+        r'\b(?:let\'?s|let\s+us)\s+work\b',
+        r'\bwork\s+mode\b',
+        r'\bget\s+to\s+work\b',
+        r'\bheading\s+to\s+work\b',
+    ]
+    if any(re.search(pat, lower) for pat in work_regexes):
+        work_r = memory_engine.get_routine("work_mode") or memory_engine.get_routine("deploy_mode")
+        if work_r:
+            return work_r
 
     return None
 
