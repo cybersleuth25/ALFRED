@@ -72,7 +72,9 @@ export default function WeatherPanel() {
         const r = await fetch('/api/weather');
         const d = await r.json();
         if (!d.error) setData(d);
-      } catch {}
+      } catch {
+        setLoading(false);
+      }
       setLoading(false);
     };
     fetchData();

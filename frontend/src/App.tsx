@@ -56,6 +56,35 @@ interface SentryState {
   tracked_subjects?: TrackedSubject[];
 }
 
+interface AcousticStatus {
+  active?: boolean;
+  ambient_rms?: number;
+  min_rms_threshold?: number;
+}
+
+interface ScreenAnalysis {
+  success?: boolean;
+  analysis?: string;
+  window?: { title: string; process: string };
+}
+
+interface DebriefMetrics {
+  focus_minutes?: number;
+  study_streak_days?: number;
+  completed_tasks?: unknown[];
+  security_incidents_count?: number;
+}
+
+interface DebriefData {
+  success?: boolean;
+  spoken_text?: string;
+  metrics?: DebriefMetrics;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
+}
+
 export function App() {
   const [orbState, setOrbState] = useState<AppState>("idle");
   const [activeView, setActiveView] = useState<ViewMode>("cockpit");
@@ -82,14 +111,14 @@ export function App() {
 
   // Acoustic & Screen Co-Pilot telemetry
   const [acousticActive, setAcousticActive] = useState(false);
-  const [acousticStatus, setAcousticStatus] = useState<any>(null);
-  const [screenAnalysis, setScreenAnalysis] = useState<any>(null);
+  const [acousticStatus, setAcousticStatus] = useState<AcousticStatus | null>(null);
+  const [screenAnalysis, setScreenAnalysis] = useState<ScreenAnalysis | null>(null);
   const [screenLoading, setScreenLoading] = useState(false);
   const [screenModalOpen, setScreenModalOpen] = useState(false);
 
   // Debrief Modal
   const [debriefModalOpen, setDebriefModalOpen] = useState(false);
-  const [debriefData, setDebriefData] = useState<any>(null);
+  const [debriefData, setDebriefData] = useState<DebriefData | null>(null);
   const [debriefLoading, setDebriefLoading] = useState(false);
 
   // Command input box
@@ -134,11 +163,13 @@ export function App() {
       try {
         const res = await fetch('/api/acoustic/status');
         if (res.ok) {
-          const d = await res.json();
+          const d = await res.json() as AcousticStatus;
           setAcousticStatus(d);
-          setAcousticActive(d.active);
+          setAcousticActive(d.active ?? false);
         }
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchAcoustic();
     const iv = setInterval(fetchAcoustic, 4000);
@@ -181,7 +212,9 @@ export function App() {
         } else if (data.type === 'meeting') {
           setMeetingState(data.value);
         }
-      } catch (e) {}
+      } catch {
+        return;
+      }
     };
 
     return () => evtSource.close();
@@ -196,7 +229,9 @@ export function App() {
           const d = await res.json();
           setMeetingState(d);
         }
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchMeeting();
   }, []);
@@ -225,7 +260,9 @@ export function App() {
           });
           applyTheme(d.name, d.accent_color, d.secondary_color);
         }
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchPersona();
   }, []);
@@ -284,13 +321,13 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: "Analyze my screen", mode })
       });
-      const data = await res.json();
+      const data = await res.json() as ScreenAnalysis;
       setScreenAnalysis(data);
       if (data.window) {
         setActiveWindow(data.window);
       }
-    } catch (e: any) {
-      setScreenAnalysis({ success: false, analysis: "Error connecting to Screen Co-Pilot: " + e.message });
+    } catch (error: unknown) {
+      setScreenAnalysis({ success: false, analysis: "Error connecting to Screen Co-Pilot: " + getErrorMessage(error) });
     } finally {
       setScreenLoading(false);
     }
@@ -305,10 +342,10 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ speak: true })
       });
-      const data = await res.json();
+      const data = await res.json() as DebriefData;
       setDebriefData(data);
-    } catch (e: any) {
-      setDebriefData({ success: false, spoken_text: "Debrief generation failed: " + e.message });
+    } catch (error: unknown) {
+      setDebriefData({ success: false, spoken_text: "Debrief generation failed: " + getErrorMessage(error) });
     } finally {
       setDebriefLoading(false);
     }

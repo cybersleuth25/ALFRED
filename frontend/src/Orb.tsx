@@ -115,11 +115,86 @@ const PRESETS = {
   speaking:   { c1: [0.50, 0.20, 1.00], c2: [1.00, 1.00, 1.00], aura: [0.70, 0.40, 1.00], dist: 0.50, pSpeed: 0.004 },
 } as const;
 
+function createPrng(seed = 12345) {
+  let s = seed;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+const DUST_COUNT = 4000;
+const RING_COUNT = 1500;
+
+function createDustInit() {
+  const rand = createPrng(12345);
+  const pos = new Float32Array(DUST_COUNT * 3);
+  const col = new Float32Array(DUST_COUNT * 3);
+  for (let i = 0; i < DUST_COUNT; i++) {
+    const r = 5.5 + rand() * 10;
+    const theta = rand() * Math.PI * 2;
+    const phi = Math.acos(2 * rand() - 1);
+    pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+    pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+    pos[i * 3 + 2] = r * Math.cos(phi);
+    rand(); // skip speed slot
+    const b = 0.25 + rand() * 0.25;
+    col[i * 3]     = b * 0.5;
+    col[i * 3 + 1] = b * 0.7;
+    col[i * 3 + 2] = b;
+  }
+  return { pos, col };
+}
+
+function createDustVel() {
+  const rand = createPrng(12345);
+  const vel = new Float32Array(DUST_COUNT * 3);
+  for (let i = 0; i < DUST_COUNT; i++) {
+    const r = 5.5 + rand() * 10;
+    const theta = rand() * Math.PI * 2;
+    rand(); // skip phi
+    vel[i * 3]     = r;
+    vel[i * 3 + 1] = theta;
+    vel[i * 3 + 2] = 0.0003 + rand() * 0.001;
+    rand(); // skip color
+  }
+  return vel;
+}
+
+function createRingInit() {
+  const rand = createPrng(67890);
+  const pos = new Float32Array(RING_COUNT * 3);
+  const col = new Float32Array(RING_COUNT * 3);
+  for (let i = 0; i < RING_COUNT; i++) {
+    const a = (i / RING_COUNT) * Math.PI * 2;
+    const r = 7.5 + (rand() - 0.5) * 0.4;
+    pos[i * 3]     = r * Math.cos(a);
+    pos[i * 3 + 1] = (rand() - 0.5) * 0.15;
+    pos[i * 3 + 2] = r * Math.sin(a);
+    const b = 0.3 + rand() * 0.3;
+    col[i * 3]     = b * 0.6;
+    col[i * 3 + 1] = b * 0.8;
+    col[i * 3 + 2] = b;
+  }
+  return { pos, col };
+}
+
+function createRingAngles() {
+  const angles = new Float32Array(RING_COUNT);
+  for (let i = 0; i < RING_COUNT; i++) {
+    angles[i] = (i / RING_COUNT) * Math.PI * 2;
+  }
+  return angles;
+}
+
 export default function Orb({ state }: OrbProps) {
   const coreRef = useRef<THREE.Mesh>(null);
   const auraRef = useRef<THREE.Mesh>(null);
   const dustRef = useRef<THREE.Points>(null);
   const ringRef = useRef<THREE.Points>(null);
+
+  const dustVelRef = useRef<Float32Array | null>(null);
+  const ringAnglesRef = useRef<Float32Array | null>(null);
 
   // ── Smooth interpolation state ──
   const lerped = useRef({
@@ -157,46 +232,11 @@ export default function Orb({ state }: OrbProps) {
     depthWrite: false,
   }), []);
 
-  // ── Ambient dust (small count, slow drift) ──
-  const dustCount = 4000;
-  const dustData = useMemo(() => {
-    const pos = new Float32Array(dustCount * 3);
-    const col = new Float32Array(dustCount * 3);
-    const vel = new Float32Array(dustCount * 3); // orbital angles: radius, theta, speed
-    for (let i = 0; i < dustCount; i++) {
-      const r = 5.5 + Math.random() * 10;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      pos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
-      pos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-      pos[i*3+2] = r * Math.cos(phi);
-      vel[i*3]   = r;          // radius
-      vel[i*3+1] = theta;      // angle
-      vel[i*3+2] = 0.0003 + Math.random() * 0.001; // individual speed
-      const b = 0.25 + Math.random() * 0.25;
-      col[i*3] = b * 0.5; col[i*3+1] = b * 0.7; col[i*3+2] = b;
-    }
-    return { pos, col, vel };
-  }, []);
+  // ── Ambient dust initial buffers ──
+  const dustInit = useMemo(() => createDustInit(), []);
 
-  // ── Single elegant ring ──
-  const ringCount = 1500;
-  const ringD = useMemo(() => {
-    const pos = new Float32Array(ringCount * 3);
-    const col = new Float32Array(ringCount * 3);
-    const angles = new Float32Array(ringCount);
-    for (let i = 0; i < ringCount; i++) {
-      const a = (i / ringCount) * Math.PI * 2;
-      const r = 7.5 + (Math.random() - 0.5) * 0.4;
-      angles[i] = a;
-      pos[i*3]   = r * Math.cos(a);
-      pos[i*3+1] = (Math.random() - 0.5) * 0.15;
-      pos[i*3+2] = r * Math.sin(a);
-      const b = 0.3 + Math.random() * 0.3;
-      col[i*3] = b * 0.6; col[i*3+1] = b * 0.8; col[i*3+2] = b;
-    }
-    return { pos, col, angles };
-  }, []);
+  // ── Single elegant ring initial buffers ──
+  const ringInit = useMemo(() => createRingInit(), []);
 
   // ── Animation loop ──
   useFrame(({ clock }) => {
@@ -214,10 +254,11 @@ export default function Orb({ state }: OrbProps) {
 
     // Core sphere
     if (coreRef.current) {
-      coreMat.uniforms.uTime.value = t;
-      coreMat.uniforms.uDistortion.value = L.dist;
-      (coreMat.uniforms.uColor1.value as THREE.Color).copy(L.c1);
-      (coreMat.uniforms.uColor2.value as THREE.Color).copy(L.c2);
+      const mat = coreRef.current.material as THREE.ShaderMaterial;
+      mat.uniforms.uTime.value = t;
+      mat.uniforms.uDistortion.value = L.dist;
+      (mat.uniforms.uColor1.value as THREE.Color).copy(L.c1);
+      (mat.uniforms.uColor2.value as THREE.Color).copy(L.c2);
 
       // Gentle breathing
       const breathe = 1.0 + Math.sin(t * 0.6) * 0.015;
@@ -228,42 +269,51 @@ export default function Orb({ state }: OrbProps) {
 
     // Aura
     if (auraRef.current) {
-      (auraMat.uniforms.uColor.value as THREE.Color).copy(L.aura);
-      auraMat.uniforms.uOpacity.value = state === 'speaking' ? 0.4 : 0.25;
+      const mat = auraRef.current.material as THREE.ShaderMaterial;
+      (mat.uniforms.uColor.value as THREE.Color).copy(L.aura);
+      mat.uniforms.uOpacity.value = state === 'speaking' ? 0.4 : 0.25;
       const aBreath = 1.0 + Math.sin(t * 0.9) * 0.02;
       auraRef.current.scale.setScalar(aBreath);
     }
 
     // Dust particles — smooth orbital drift
     if (dustRef.current) {
-      const P = dustData.pos;
-      const V = dustData.vel;
-      for (let i = 0; i < dustCount; i++) {
-        const r = V[i*3];
-        V[i*3+1] += V[i*3+2] + L.pSpeed; // advance angle
-        const theta = V[i*3+1];
-        const phi = Math.acos(((i / dustCount) * 2 - 1) * 0.95); // spread
-        const wobble = Math.sin(t * 0.3 + i * 0.01) * 0.5;
-        P[i*3]   = (r + wobble) * Math.sin(phi) * Math.cos(theta);
-        P[i*3+1] = (r + wobble) * Math.sin(phi) * Math.sin(theta) * 0.6;
-        P[i*3+2] = (r + wobble) * Math.cos(phi);
+      if (!dustVelRef.current) {
+        dustVelRef.current = createDustVel();
       }
-      dustRef.current.geometry.attributes.position.needsUpdate = true;
+      const posAttr = dustRef.current.geometry.attributes.position;
+      const P = posAttr.array as Float32Array;
+      const V = dustVelRef.current;
+      for (let i = 0; i < DUST_COUNT; i++) {
+        const r = V[i * 3];
+        V[i * 3 + 1] += V[i * 3 + 2] + L.pSpeed; // advance angle
+        const theta = V[i * 3 + 1];
+        const phi = Math.acos(((i / DUST_COUNT) * 2 - 1) * 0.95); // spread
+        const wobble = Math.sin(t * 0.3 + i * 0.01) * 0.5;
+        P[i * 3]     = (r + wobble) * Math.sin(phi) * Math.cos(theta);
+        P[i * 3 + 1] = (r + wobble) * Math.sin(phi) * Math.sin(theta) * 0.6;
+        P[i * 3 + 2] = (r + wobble) * Math.cos(phi);
+      }
+      posAttr.needsUpdate = true;
     }
 
     // Ring — smooth rotation
     if (ringRef.current) {
-      const P = ringD.pos;
-      const A = ringD.angles;
+      if (!ringAnglesRef.current) {
+        ringAnglesRef.current = createRingAngles();
+      }
+      const posAttr = ringRef.current.geometry.attributes.position;
+      const P = posAttr.array as Float32Array;
+      const A = ringAnglesRef.current;
       const ringSpeed = state === 'processing' ? 0.25 : state === 'listening' ? 0.15 : 0.06;
-      for (let i = 0; i < ringCount; i++) {
+      for (let i = 0; i < RING_COUNT; i++) {
         const angle = A[i] + t * ringSpeed;
         const r = 7.5 + Math.sin(angle * 6 + t) * 0.15;
-        P[i*3]   = r * Math.cos(angle);
-        P[i*3+1] = Math.sin(angle * 3 + t * 0.5) * 0.4;
-        P[i*3+2] = r * Math.sin(angle);
+        P[i * 3]     = r * Math.cos(angle);
+        P[i * 3 + 1] = Math.sin(angle * 3 + t * 0.5) * 0.4;
+        P[i * 3 + 2] = r * Math.sin(angle);
       }
-      ringRef.current.geometry.attributes.position.needsUpdate = true;
+      posAttr.needsUpdate = true;
       ringRef.current.rotation.x = 0.35; // Gentle tilt
     }
   });
@@ -283,10 +333,10 @@ export default function Orb({ state }: OrbProps) {
       {/* Ambient Dust */}
       <points ref={dustRef}>
         <bufferGeometry>
-          {/* @ts-ignore */}
-          <bufferAttribute attach="attributes-position" count={dustCount} array={dustData.pos} itemSize={3} />
-          {/* @ts-ignore */}
-          <bufferAttribute attach="attributes-color" count={dustCount} array={dustData.col} itemSize={3} />
+          {/* @ts-expect-error Three.js bufferAttribute attach */}
+          <bufferAttribute attach="attributes-position" count={DUST_COUNT} array={dustInit.pos} itemSize={3} />
+          {/* @ts-expect-error Three.js bufferAttribute attach */}
+          <bufferAttribute attach="attributes-color" count={DUST_COUNT} array={dustInit.col} itemSize={3} />
         </bufferGeometry>
         <pointsMaterial size={0.06} vertexColors transparent opacity={0.35} blending={THREE.AdditiveBlending} depthWrite={false} />
       </points>
@@ -294,10 +344,10 @@ export default function Orb({ state }: OrbProps) {
       {/* Elegant Ring */}
       <points ref={ringRef}>
         <bufferGeometry>
-          {/* @ts-ignore */}
-          <bufferAttribute attach="attributes-position" count={ringCount} array={ringD.pos} itemSize={3} />
-          {/* @ts-ignore */}
-          <bufferAttribute attach="attributes-color" count={ringCount} array={ringD.col} itemSize={3} />
+          {/* @ts-expect-error Three.js bufferAttribute attach */}
+          <bufferAttribute attach="attributes-position" count={RING_COUNT} array={ringInit.pos} itemSize={3} />
+          {/* @ts-expect-error Three.js bufferAttribute attach */}
+          <bufferAttribute attach="attributes-color" count={RING_COUNT} array={ringInit.col} itemSize={3} />
         </bufferGeometry>
         <pointsMaterial size={0.08} vertexColors transparent opacity={0.45} blending={THREE.AdditiveBlending} depthWrite={false} />
       </points>

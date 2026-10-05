@@ -25,9 +25,7 @@ export default function ResearchViewer({ onClose, initialFilename }: Props) {
         const data = await res.json();
         if (data && data.dossiers) {
           setDossiers(data.dossiers);
-          if (!selectedFilename && data.dossiers.length > 0) {
-            setSelectedFilename(data.dossiers[0].filename);
-          }
+          setSelectedFilename(current => current ?? data.dossiers[0]?.filename ?? null);
         }
       } catch (err) {
         console.error('Failed to load dossiers:', err);
@@ -48,7 +46,7 @@ export default function ResearchViewer({ onClose, initialFilename }: Props) {
         } else {
           setContent('# Error\n\nCould not load dossier content.');
         }
-      } catch (err) {
+      } catch {
         setContent('# Network Error\n\nFailed to reach research archive.');
       } finally {
         setLoading(false);

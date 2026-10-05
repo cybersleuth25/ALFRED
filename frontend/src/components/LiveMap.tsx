@@ -1,11 +1,29 @@
 import { useEffect, useState, useRef } from "react";
-import Map, { Marker, Popup } from "react-map-gl";
+import Map, { Marker, Popup, type MapRef } from "react-map-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
+interface LiveFeatureProperties {
+  category: string;
+  altitude?: number;
+  callsign?: string;
+  velocity?: number;
+  source?: string;
+  confidence?: number;
+}
+
+interface LiveFeature {
+  geometry: { coordinates: [number, number] };
+  properties: LiveFeatureProperties;
+}
+
+interface LiveUpdate {
+  features?: LiveFeature[];
+}
+
 export default function LiveMap() {
-  const [features, setFeatures] = useState<any[]>([]);
+  const [features, setFeatures] = useState<LiveFeature[]>([]);
   const [stats, setStats] = useState({ aircraft: 0, vehicles: 0 });
-  const mapRef = useRef<any>(null);
+  const mapRef = useRef<MapRef>(null);
 
   useEffect(() => {
     // WebSocket connection to FastAPI backend
@@ -13,13 +31,13 @@ export default function LiveMap() {
     
     ws.onmessage = (event) => {
       try {
-        const geojson = JSON.parse(event.data);
+        const geojson = JSON.parse(event.data) as LiveUpdate;
         if (geojson.features) {
           setFeatures(geojson.features);
           // Update stats
           setStats({
-            aircraft: geojson.features.filter((f: any) => f.properties.category === "aircraft").length,
-            vehicles: geojson.features.filter((f: any) => f.properties.category === "vehicles" || f.properties.category === "vehicle").length,
+            aircraft: geojson.features.filter((feature) => feature.properties.category === "aircraft").length,
+            vehicles: geojson.features.filter((feature) => feature.properties.category === "vehicles" || feature.properties.category === "vehicle").length,
           });
         }
       } catch (e) {
@@ -32,7 +50,7 @@ export default function LiveMap() {
     };
   }, []);
 
-  const [hoverInfo, setHoverInfo] = useState<any>(null);
+  const [hoverInfo, setHoverInfo] = useState<LiveFeature | null>(null);
 
   return (
     <div className="absolute inset-0 z-0 flex">
@@ -71,8 +89,8 @@ export default function LiveMap() {
                     longitude={lon}
                     latitude={lat}
                     anchor="center"
-                    onClick={(e: any) => {
-                        e.originalEvent.stopPropagation();
+                    onClick={(event) => {
+                        event.originalEvent.stopPropagation();
                         setHoverInfo(feature);
                     }}
                 >
@@ -113,7 +131,7 @@ export default function LiveMap() {
                     </>}
                     {hoverInfo.properties.category !== "aircraft" && <>
                         Source: {hoverInfo.properties.source}<br/>
-                        Conf: {(hoverInfo.properties.confidence * 100).toFixed(1)}%
+                        Conf: {hoverInfo.properties.confidence != null ? `${(hoverInfo.properties.confidence * 100).toFixed(1)}%` : 'N/A'}
                     </>}
                 </div>
             </Popup>

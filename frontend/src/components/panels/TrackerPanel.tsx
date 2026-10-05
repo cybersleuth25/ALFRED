@@ -18,7 +18,9 @@ export default function TrackerPanel() {
         setIss(data.iss || { lat: 0, lng: 0 });
         setCrypto(data.crypto || {});
         if (data.updated) setUpdated(data.updated.slice(0, 5));
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchData();
     const interval = setInterval(fetchData, 15000);

@@ -60,7 +60,9 @@ export default function SystemPanel() {
         const r = await fetch('/api/system');
         const d = await r.json();
         setData(d);
-      } catch {}
+      } catch {
+        return;
+      }
     };
     fetchData();
     const interval = setInterval(fetchData, 3000);
