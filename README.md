@@ -250,7 +250,9 @@ Add a shortcut of [`start_alfred.bat`](file:///c:/VS%20Code/JARVIS/start_alfred.
 * **Sensory Isolation:** Audio streams, video frames, and webcam feeds **never leave your device**.
 * **Local Biometrics:** Facial embeddings (`SFace`), hand tracking (`MediaPipe`), and voice models (`Vosk`) run strictly in offline memory.
 * **Air-Gapped Memory:** SQLite databases (`alfred_memory.db`), personal journals, and knowledge graphs reside on your physical SSD.
-* **Encrypted API Calls:** Cloud calls are strictly limited to stateless text prompts sent to Groq for ultra-fast reasoning.
+* **Cloud Calls (HTTPS):** Text prompts go to Groq for reasoning. Features that analyze images — Screen Co-Pilot, Telegram photo analysis, the geospatial tracker and dynamic skill authoring — send data to Google Gemini when `GEMINI_API_KEY` is set. Leave it empty to keep images on-device.
+* **Locked-Down Local API:** The backend only answers to `localhost`/`127.0.0.1`, and every state-changing request needs a per-launch session token, so other websites can't drive Alfred.
+* **Human-in-the-Loop for Risky Tools:** Terminal commands, file deletion, git commits, shutdown, WhatsApp messages, memory wipes and new skills wait for you to say **"confirm"** (or "cancel") before running.
 
 ---
 

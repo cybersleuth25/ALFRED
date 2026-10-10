@@ -4,6 +4,8 @@ import asyncio
 import threading
 import time
 import random
+import queue
+import secrets
 try:
     import webview
 except ImportError:
@@ -21,7 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-USER_CITY = os.getenv("USER_CITY", "Chikkamagaluru")
+USER_CITY = os.getenv("USER_CITY") or os.getenv("ALFRED_USER_LOCATION", "London").split(",")[0].strip()
 
 # Make sure we can import from the parent directory
 import sys
@@ -50,18 +52,52 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Alfred AI Protocol", lifespan=lifespan)
 
-# Add CORS Middleware just in case
+ALLOWED_ORIGINS = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
+ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
+
+# Per-launch secret. The HUD fetches it from /api/session-token (readable only by
+# same-origin/allowed origins thanks to CORS) and sends it on every state-changing call.
+SESSION_TOKEN = os.getenv("ALFRED_SESSION_TOKEN") or secrets.token_urlsafe(32)
+TOKEN_HEADER = "X-Alfred-Token"
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _host_allowed(host_header: str) -> bool:
+    h = host_header or ""
+    host = h[:h.find("]") + 1] if h.startswith("[") else h.split(":")[0]
+    return host.lower() in ALLOWED_HOSTS
+
+
+@app.middleware("http")
+async def security_guard(request: Request, call_next):
+    # Block DNS-rebinding: only answer to local host names
+    if not _host_allowed(request.headers.get("host", "")):
+        return JSONResponse({"error": "Invalid host"}, status_code=403)
+    # Block drive-by CSRF: unsafe methods need the per-launch token
+    if request.method not in _SAFE_METHODS:
+        supplied = request.headers.get(TOKEN_HEADER, "")
+        if not secrets.compare_digest(supplied, SESSION_TOKEN):
+            return JSONResponse({"error": "Missing or invalid session token"}, status_code=403)
+    return await call_next(request)
+
+
+# Added after the guard so CORS wraps it (preflights and error responses get CORS headers)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/session-token")
+async def api_session_token():
+    return JSONResponse({"token": SESSION_TOKEN})
 
 web_dir = os.path.dirname(__file__)
 dist_dir = os.path.abspath(os.path.join(web_dir, '..', 'frontend', 'dist'))
@@ -81,6 +117,25 @@ async def index(request: Request):
             return HTMLResponse(f.read())
     return HTMLResponse("<body><h1>Alfred</h1><p>UI Native Build Mode - Please run 'npm run build' in frontend folder</p></body>")
 
+@app.get("/island", response_class=HTMLResponse)
+async def island_route(request: Request):
+    index_path = os.path.join(dist_dir, 'index.html')
+    if os.path.exists(index_path):
+        with open(index_path, 'r', encoding='utf-8') as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse("<body><h1>Alfred Dynamic Island</h1></body>")
+
+@app.get("/alfred_butler.jpg")
+async def get_avatar_image():
+    from fastapi.responses import FileResponse
+    avatar_path = os.path.join(dist_dir, "alfred_butler.jpg")
+    if os.path.exists(avatar_path):
+        return FileResponse(avatar_path, media_type="image/jpeg")
+    public_path = os.path.abspath(os.path.join(web_dir, '..', 'frontend', 'public', 'alfred_butler.jpg'))
+    if os.path.exists(public_path):
+        return FileResponse(public_path, media_type="image/jpeg")
+    return Response(status_code=404)
+
 ui_active_connections = 0
 
 @app.get('/stream')
@@ -88,7 +143,8 @@ async def stream(request: Request):
     """EventSource endpoint for standard Alfred events."""
     global ui_active_connections
     ui_active_connections += 1
-    
+    subscriber = shared.event_queue.subscribe()
+
     async def delayed_shutdown():
         await asyncio.sleep(10.0)
         if ui_active_connections <= 0:
@@ -102,16 +158,21 @@ async def stream(request: Request):
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.to_thread(shared.event_queue.get)
+                    # Short timeout so the worker thread is released when the client leaves
+                    event = await asyncio.to_thread(subscriber.get, True, 1.0)
                     yield json.dumps(event)
+                except queue.Empty:
+                    continue
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     print(f"Stream error: {e}")
                     await asyncio.sleep(1)
         finally:
+            shared.event_queue.unsubscribe(subscriber)
             ui_active_connections -= 1
-            if ui_active_connections <= 0:
+            # Background daemons (sentry, tripwires) keep running unless explicitly opted out
+            if ui_active_connections <= 0 and os.getenv("ALFRED_EXIT_ON_UI_CLOSE", "false").lower() == "true":
                 asyncio.create_task(delayed_shutdown())
 
     return EventSourceResponse(event_generator())
@@ -358,20 +419,6 @@ async def api_focus_heatmap():
         import memory_engine
         data = memory_engine.get_hourly_focus_data()
         return JSONResponse({"heatmap": data})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.post('/api/focus/lockdown')
-async def api_focus_lockdown(request: Request):
-    """Toggle lockdown mode from the frontend."""
-    try:
-        import study_mentor
-        import shared
-        if shared.omega_lockdown:
-            result = study_mentor.disengage_lockdown()
-        else:
-            result = study_mentor.engage_lockdown()
-        return JSONResponse({"lockdown": shared.omega_lockdown, "message": result})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1156,6 +1203,10 @@ connected_clients: list[WebSocket] = []
 
 @app.websocket("/ws/live")
 async def websocket_endpoint(ws: WebSocket):
+    origin = ws.headers.get("origin")
+    if (origin and origin not in ALLOWED_ORIGINS) or not _host_allowed(ws.headers.get("host", "")):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     connected_clients.append(ws)
     try:
@@ -1197,6 +1248,11 @@ def _kill_stale_port(port):
                     # Don't kill ourselves
                     if proc.pid == os.getpid():
                         continue
+                    # Only kill a leftover Alfred backend, never an unrelated app on the port
+                    cmdline = " ".join(proc.cmdline()).lower()
+                    if "python" not in proc.name().lower() or "app.py" not in cmdline:
+                        print(f"[System] Port {port} is held by {proc.name()} (PID {proc.pid}); not killing it.")
+                        continue
                     print(f"[System] Killing stale process on port {port}: {proc.name()} (PID {proc.pid})")
                     proc.kill()
                     proc.wait(timeout=5)
@@ -1220,14 +1276,8 @@ if __name__ == '__main__':
     server_thread = threading.Thread(target=run_uvicorn, daemon=True)
     server_thread.start()
     
-    # Start the Telegram Bot remote link
-    try:
-        import telegram_bot
-        telegram_thread = threading.Thread(target=telegram_bot.start_telegram_bot_loop, daemon=True)
-        telegram_thread.start()
-    except Exception as e:
-        print(f"[System] Failed to start Telegram Bot: {e}")
-    
+    # Telegram bot is started by alfred.main_loop()
+
     # Start the Screen-Pipe Infinite Memory Daemon
     try:
         import screen_pipe
