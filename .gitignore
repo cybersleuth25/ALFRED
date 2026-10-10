@@ -69,3 +69,6 @@ Alfred_Workspace/debriefs/
 Alfred_Workspace/locate_results/
 Alfred_Workspace/library_index.sqlite
 Alfred_Workspace/always_allowed.json
+
+# Runtime persona selection (changes whenever you switch persona)
+models/personas/active_persona.txt
