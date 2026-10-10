@@ -37,8 +37,9 @@ def test_broadcaster_drops_oldest_when_subscriber_is_full():
 # ── Confirmation gate for dangerous tools ──
 
 @pytest.fixture
-def gated_tool(monkeypatch):
+def gated_tool(monkeypatch, tmp_path):
     calls = []
+    monkeypatch.setattr(core_tools, "_ALWAYS_FILE", str(tmp_path / "always_allowed.json"))
     monkeypatch.setitem(core_tools.TOOL_REGISTRY, "run_terminal_command",
                         lambda command, cwd="": calls.append(command) or f"ran {command}")
     monkeypatch.setattr(core_tools, "_pending_action", None)
@@ -184,3 +185,53 @@ def test_generate_response_handles_confirmation(gated_tool):
     core_tools.execute_tool("run_terminal_command", {"command": "echo hi"})
     assert llm_engine.generate_response("confirm") == "ran echo hi"
     assert gated_tool == ["echo hi"]
+
+
+def test_approval_endpoint_reports_and_resolves_pending_action(client, web_app, gated_tool):
+    token = {"X-Alfred-Token": web_app.SESSION_TOKEN}
+    assert client.get("/api/approval").json()["pending"] is None
+
+    core_tools.execute_tool("run_terminal_command", {"command": "echo hi"})
+    pending = client.get("/api/approval").json()["pending"]
+    assert pending["tool"] == "run_terminal_command"
+    assert "echo hi" in pending["summary"]
+
+    res = client.post("/api/approval", json={"decision": "confirm"}, headers=token)
+    assert res.status_code == 200 and res.json()["result"] == "ran echo hi"
+    assert gated_tool == ["echo hi"]
+    assert client.get("/api/approval").json()["pending"] is None
+
+
+def test_approval_endpoint_needs_token_and_valid_decision(client, web_app, gated_tool):
+    core_tools.execute_tool("run_terminal_command", {"command": "echo hi"})
+    assert client.post("/api/approval", json={"decision": "confirm"}).status_code == 403
+    token = {"X-Alfred-Token": web_app.SESSION_TOKEN}
+    assert client.post("/api/approval", json={"decision": "yolo"}, headers=token).status_code == 400
+    assert client.post("/api/approval", json={"decision": "cancel"}, headers=token).status_code == 200
+    assert client.post("/api/approval", json={"decision": "cancel"}, headers=token).status_code == 409
+    assert gated_tool == []
+
+
+def test_always_allow_trusts_that_exact_command_only(client, web_app, gated_tool):
+    token = {"X-Alfred-Token": web_app.SESSION_TOKEN}
+    core_tools.execute_tool("run_terminal_command", {"command": "npm run build"})
+    assert client.get("/api/approval").json()["pending"]["can_always"] is True
+    res = client.post("/api/approval", json={"decision": "always"}, headers=token)
+    assert res.json()["result"] == "ran npm run build"
+
+    # Same exact call now runs straight away; a different one still asks
+    assert core_tools.execute_tool("run_terminal_command", {"command": "npm run build"}) == "ran npm run build"
+    assert core_tools.execute_tool("run_terminal_command", {"command": "npm run lint"}).startswith("CONFIRMATION REQUIRED")
+    assert client.get("/api/approval").json()["trusted"] == 1
+
+    client.post("/api/approval/forget", headers=token)
+    assert client.get("/api/approval").json()["trusted"] == 0
+    assert gated_tool == ["npm run build", "npm run build"]
+
+
+def test_always_is_refused_for_dangerous_tools(monkeypatch, gated_tool):
+    monkeypatch.setitem(core_tools.TOOL_REGISTRY, "shutdown_pc", lambda: "bye")
+    core_tools.execute_tool("shutdown_pc", {})
+    assert core_tools.pending_action_info()["can_always"] is False
+    assert core_tools.allow_pending_always() is None
+    assert core_tools.has_pending_action()

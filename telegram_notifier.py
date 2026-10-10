@@ -69,10 +69,15 @@ def _run_async(coro):
         t.start()
         t.join(timeout=15)
         if exception[0]:
-            raise exception[0]
+            print(f"[Telegram Notifier] Async execution failed: {exception[0]}")
+            return None
         return result[0]
     else:
-        return asyncio.run(coro)
+        try:
+            return asyncio.run(coro)
+        except Exception as e:
+            print(f"[Telegram Notifier] asyncio.run failed: {e}")
+            return None
 
 
 async def _send_message_async(text: str):

@@ -1,4 +1,29 @@
 import os
+import sys
+
+# ── Startup guard (runs before any heavy import) ──
+# 1. Always run on the project venv, where the dependencies live.
+# 2. Only one backend at a time: a second launch opens the running one instead.
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_instance_mutex = None
+if __name__ == '__main__':
+    _venv_dir = os.path.join(_ROOT, 'venv')
+    if os.path.isdir(_venv_dir) and os.path.normcase(os.path.abspath(sys.prefix)) != os.path.normcase(_venv_dir):
+        _exe = 'pythonw.exe' if sys.executable.lower().endswith('pythonw.exe') else 'python.exe'
+        import subprocess
+        print(f"[System] Not running from the project venv ({sys.executable}); relaunching with venv\\Scripts\\{_exe}...")
+        sys.exit(subprocess.call([os.path.join(_venv_dir, 'Scripts', _exe), os.path.abspath(__file__), *sys.argv[1:]]))
+
+    if sys.platform == 'win32':
+        import ctypes
+        _k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        _instance_mutex = _k32.CreateMutexW(None, False, "Local\\AlfredBackend")
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            print("[System] Alfred is already running; opening it instead of starting a second copy.")
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:8000")
+            sys.exit(0)
+
 import json
 import asyncio
 import threading
@@ -905,6 +930,51 @@ async def api_speech_resume():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
+_island_process = None
+
+@app.post('/api/island/launch')
+async def api_island_launch():
+    """Starts the desktop notch (desktop_island.py) if it isn't already running."""
+    global _island_process
+    import subprocess, sys
+    if _island_process and _island_process.poll() is None:
+        return JSONResponse({"status": "already_running"})
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    venv_py = os.path.join(root, "venv", "Scripts", "pythonw.exe")
+    python = venv_py if os.path.exists(venv_py) else sys.executable
+    _island_process = subprocess.Popen([python, os.path.join(root, "desktop_island.py")], cwd=root)
+    return JSONResponse({"status": "launched"})
+
+@app.get('/api/approval')
+async def api_approval_status():
+    """Pending risky tool call awaiting the user's Allow / Deny (shown in the notch)."""
+    from tools import core_tools
+    return JSONResponse({"pending": core_tools.pending_action_info(), "trusted": core_tools.always_allowed_count()})
+
+@app.post('/api/approval/forget')
+async def api_approval_forget():
+    """Clears every command trusted with "Always"."""
+    from tools import core_tools
+    core_tools.forget_always_allowed()
+    return JSONResponse({"success": True})
+
+@app.post('/api/approval')
+async def api_approval_decide(req: Request):
+    """Allow or deny the pending risky tool call."""
+    from tools import core_tools
+    data = await req.json()
+    decision = data.get("decision")
+    if decision not in ("confirm", "cancel", "always"):
+        return JSONResponse({"error": "decision must be 'confirm', 'cancel' or 'always'"}, status_code=400)
+    if decision == "always":
+        result = await asyncio.to_thread(core_tools.allow_pending_always)
+    else:
+        result = await asyncio.to_thread(core_tools.handle_confirmation_reply, decision)
+    if result is None:
+        return JSONResponse({"error": "Nothing pending"}, status_code=409)
+    shared.push_log(str(result), author="System")
+    return JSONResponse({"success": True, "result": str(result)})
 
 @app.get('/api/speech/status')
 async def api_speech_status():

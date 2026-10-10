@@ -1053,7 +1053,34 @@ CONFIRM_WORDS = {"confirm", "yes confirm", "confirm it", "proceed", "yes proceed
 CANCEL_WORDS = {"cancel", "no", "abort", "don't", "do not", "stop"}
 _PENDING_TTL_SECONDS = 120
 _pending_action = None  # (tool_name, kwargs, created_at)
-_pending_lock = threading.Lock()
+_pending_lock = threading.RLock()  # re-entrant: _announce_pending reads state while held
+
+# "Always allow": exact calls the user has trusted from the notch. Only low-blast-radius
+# tools are eligible — never shutdown, memory wipes, deletions or new code/skills.
+ALWAYS_ELIGIBLE_TOOLS = {"run_terminal_command", "git_smart_commit", "clean_dev_workspace"}
+_ALWAYS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Alfred_Workspace", "always_allowed.json")
+
+
+def _load_always() -> set:
+    try:
+        with open(_ALWAYS_FILE, encoding="utf-8") as f:
+            return set(_json.load(f))
+    except Exception:
+        return set()
+
+
+def _save_always(items: set):
+    os.makedirs(os.path.dirname(_ALWAYS_FILE), exist_ok=True)
+    with open(_ALWAYS_FILE, "w", encoding="utf-8") as f:
+        _json.dump(sorted(items), f, indent=2)
+
+
+def always_allowed_count() -> int:
+    return len(_load_always())
+
+
+def forget_always_allowed():
+    _save_always(set())
 
 
 def _describe_call(tool_name: str, kwargs: dict) -> str:
@@ -1064,6 +1091,28 @@ def _describe_call(tool_name: str, kwargs: dict) -> str:
 def has_pending_action() -> bool:
     with _pending_lock:
         return _pending_action is not None and time.time() - _pending_action[2] < _PENDING_TTL_SECONDS
+
+
+def pending_action_info():
+    """Pending gated call as a dict for the HUD notch, or None."""
+    with _pending_lock:
+        if _pending_action is None or time.time() - _pending_action[2] >= _PENDING_TTL_SECONDS:
+            return None
+        tool_name, kwargs, created = _pending_action
+        return {
+            "tool": tool_name,
+            "summary": _describe_call(tool_name, kwargs),
+            "expires_in": int(_PENDING_TTL_SECONDS - (time.time() - created)),
+            "can_always": tool_name in ALWAYS_ELIGIBLE_TOOLS,
+        }
+
+
+def _announce_pending():
+    try:
+        import shared
+        shared.event_queue.put({"type": "approval", "value": pending_action_info()})
+    except Exception:
+        pass
 
 
 def handle_confirmation_reply(text: str):
@@ -1079,9 +1128,26 @@ def handle_confirmation_reply(text: str):
             _pending_action = None
         elif reply in CANCEL_WORDS:
             _pending_action = None
+            _announce_pending()
             return f"Cancelled: {_describe_call(pending[0], pending[1])}."
         else:
             return None
+    _announce_pending()
+    return _run_tool(pending[0], pending[1])
+
+
+def allow_pending_always():
+    """Runs the pending call and trusts that exact call from now on. None if nothing eligible is pending."""
+    global _pending_action
+    with _pending_lock:
+        pending = _pending_action
+        if pending is None or time.time() - pending[2] >= _PENDING_TTL_SECONDS or pending[0] not in ALWAYS_ELIGIBLE_TOOLS:
+            return None
+        _pending_action = None
+        trusted = _load_always()
+        trusted.add(_describe_call(pending[0], pending[1]))
+        _save_always(trusted)
+    _announce_pending()
     return _run_tool(pending[0], pending[1])
 
 
@@ -1102,8 +1168,11 @@ def execute_tool(tool_name: str, kwargs: dict) -> str:
         return f"Error: Tool '{tool_name}' not found."
 
     if tool_name in CONFIRMATION_REQUIRED_TOOLS:
+        if tool_name in ALWAYS_ELIGIBLE_TOOLS and _describe_call(tool_name, kwargs) in _load_always():
+            return _run_tool(tool_name, kwargs)
         with _pending_lock:
             _pending_action = (tool_name, dict(kwargs), time.time())
+        _announce_pending()
         return (f"CONFIRMATION REQUIRED: I need your approval to run {_describe_call(tool_name, kwargs)}. "
                 f"Say 'confirm' to proceed or 'cancel' to abort.")
 
