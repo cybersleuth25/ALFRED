@@ -62,3 +62,9 @@ logs/
 *.log
 assets/incidents/
 Alfred_Workspace/incidents/
+
+# Personal / generated Alfred workspace data
+Alfred_Workspace/briefing_cache.json
+Alfred_Workspace/debriefs/
+Alfred_Workspace/locate_results/
+Alfred_Workspace/library_index.sqlite

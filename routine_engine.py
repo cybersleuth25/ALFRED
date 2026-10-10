@@ -304,7 +304,10 @@ def execute_routine(name_or_id) -> str:
                     shared.push_log(f"[{display} #{step_num}] Executing tool: {tool_name}", "RoutineEngine")
                     result = core_tools.execute_tool(tool_name, kwargs)
 
-                    if step.get("speak_result", False) and result:
+                    if str(result).startswith("CONFIRMATION REQUIRED"):
+                        shared.push_log(str(result), "RoutineEngine")
+                        shared.safe_speak(str(result).replace("CONFIRMATION REQUIRED: ", ""))
+                    elif step.get("speak_result", False) and result:
                         shared.safe_speak(str(result))
 
                 # 3. Application launch step

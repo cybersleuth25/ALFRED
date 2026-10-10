@@ -1,4 +1,4 @@
-import ollama
+import threading
 import json
 import os
 import sys
@@ -501,7 +501,21 @@ def _fast_respond(prompt: str, speech: str, t0: float, save_memory: bool = True,
         tts_callback(speech)
     return speech
 
+# Voice, HUD and Telegram threads all call generate_response; serialize them so
+# _conversation_history and multi-step tool loops never interleave.
+_response_lock = threading.RLock()
+
+
 def generate_response(prompt: str, tts_callback=None) -> str:
+    with _response_lock:
+        t0 = time.time()
+        confirmation_reply = core_tools.handle_confirmation_reply(prompt)
+        if confirmation_reply is not None:
+            return _fast_respond(prompt, str(confirmation_reply), t0, tts_callback=tts_callback)
+        return _generate_response_unlocked(prompt, tts_callback)
+
+
+def _generate_response_unlocked(prompt: str, tts_callback=None) -> str:
     global _conversation_history
     t0 = time.time()
     
@@ -1403,12 +1417,18 @@ INTELLIGENCE & BEHAVIOR GUIDELINES:
                     tool_name = t.get("tool")
                     kwargs = t.get("kwargs", {})
                     print(f"[{target_agent.upper()}] executing tool: {tool_name}({kwargs})")
-                    res = core_tools.execute_tool(tool_name, kwargs)
+                    res = str(core_tools.execute_tool(tool_name, kwargs))
                     print(f"       Result: {res}")
+                    if res.startswith("CONFIRMATION REQUIRED"):
+                        # Stop here and ask the user; never let the model talk past the gate
+                        final = res.replace("CONFIRMATION REQUIRED: ", "")
+                        break
                     results.append(f"Result from {tool_name}: {res}")
                     if "Error" in res or "not found" in res:
                         has_error = True
-                
+                if final:
+                    break
+
                 messages.append({'role': 'assistant', 'content': content})
                 
                 if has_error:
