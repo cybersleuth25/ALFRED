@@ -1053,7 +1053,7 @@ CONFIRM_WORDS = {"confirm", "yes confirm", "confirm it", "proceed", "yes proceed
 CANCEL_WORDS = {"cancel", "no", "abort", "don't", "do not", "stop"}
 _PENDING_TTL_SECONDS = 120
 _pending_action = None  # (tool_name, kwargs, created_at)
-_pending_lock = threading.Lock()
+_pending_lock = threading.RLock()  # re-entrant: _announce_pending reads state while held
 
 
 def _describe_call(tool_name: str, kwargs: dict) -> str:
@@ -1064,6 +1064,27 @@ def _describe_call(tool_name: str, kwargs: dict) -> str:
 def has_pending_action() -> bool:
     with _pending_lock:
         return _pending_action is not None and time.time() - _pending_action[2] < _PENDING_TTL_SECONDS
+
+
+def pending_action_info():
+    """Pending gated call as a dict for the HUD notch, or None."""
+    with _pending_lock:
+        if _pending_action is None or time.time() - _pending_action[2] >= _PENDING_TTL_SECONDS:
+            return None
+        tool_name, kwargs, created = _pending_action
+        return {
+            "tool": tool_name,
+            "summary": _describe_call(tool_name, kwargs),
+            "expires_in": int(_PENDING_TTL_SECONDS - (time.time() - created)),
+        }
+
+
+def _announce_pending():
+    try:
+        import shared
+        shared.event_queue.put({"type": "approval", "value": pending_action_info()})
+    except Exception:
+        pass
 
 
 def handle_confirmation_reply(text: str):
@@ -1079,9 +1100,11 @@ def handle_confirmation_reply(text: str):
             _pending_action = None
         elif reply in CANCEL_WORDS:
             _pending_action = None
+            _announce_pending()
             return f"Cancelled: {_describe_call(pending[0], pending[1])}."
         else:
             return None
+    _announce_pending()
     return _run_tool(pending[0], pending[1])
 
 
@@ -1104,6 +1127,7 @@ def execute_tool(tool_name: str, kwargs: dict) -> str:
     if tool_name in CONFIRMATION_REQUIRED_TOOLS:
         with _pending_lock:
             _pending_action = (tool_name, dict(kwargs), time.time())
+        _announce_pending()
         return (f"CONFIRMATION REQUIRED: I need your approval to run {_describe_call(tool_name, kwargs)}. "
                 f"Say 'confirm' to proceed or 'cancel' to abort.")
 

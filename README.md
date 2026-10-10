@@ -58,12 +58,20 @@
 * **PinViz 3D Spatial Visualizer:** A Three.js and React Three Fiber 3D photo universe controlled completely via spatial air gestures from your webcam.
 * **Local YOLOv8 & SFace Recognition:** Runs real-time object detection and ONNX facial biometrics by multiplexing background camera feeds without hardware contention.
 
-### 🛡️ 4. Sentry Tripwire & Hardware Defense
+### 🎭 4. Butler Avatar, Mascot & Dynamic Island
+* **3D Anime Butler Avatar (`AlfredAvatar3D`):** Built with Three.js & React Three Fiber featuring interactive cursor gaze tracking, natural eye-blinking cycles, audio-reactive mouth lip-sync, rotating holographic HUD monocle, formal wing-collar butler attire, and thought auras.
+* **2D Stylized Vector Avatar (`AlfredAvatar2D`):** High-performance SVG anime butler portrait with pupil tracking, eyelid blinks, speech-synchronized mouth animation, and orbiting audio equalizer frequencies.
+* **Dynamic Island Desktop Helper:**
+  * **Dual Operating Mode:** Integrated as a top HUD in the main command center, or launched as a standalone notch at the top-centre of your screen (`launch_dynamic_island.bat` / `python desktop_island.py`). It is a frameless, always-on-top, taskbar-hidden `pywebview` window clipped to the island's shape, so clicks outside it pass through to the apps underneath. Hover the top edge to peek, click to open, `Esc` to fold.
+  * **Butler Mascot:** An animated butler character (`ButlerMascot.tsx`, `mascot/butlerBot.ts`) lives in the island.
+  * **All-in-One Helper Capabilities:** Quick text & voice command submission, 1-click Screen Co-Pilot & Debug Code vision triggers, real-time speech captions & audio waveform equalizer, Pomodoro focus tracking, Spotify playback controls, and persona switching.
+
+### 🛡️ 5. Sentry Tripwire & Hardware Defense
 * **Hardware Insertion Tripwire:** Instant detection and telemetry logging of unknown USB storage insertion, auto-capturing webcam snapshots of whoever plugged it in.
 * **Process Anomaly Watcher:** Monitors suspicious background processes, elevated CPU/network spikes, and unauthorized desktop access.
 * **Telegram Incident Alerts:** Dispatches security snapshots and incident reports straight to your authorized Telegram handle with remote kill/lock commands.
 
-### 🌐 5. Cyberpunk HUD Command Center (V3)
+### 🌐 6. Cyberpunk HUD Command Center (V3)
 * **Vite + React 19 + TailwindCSS v4:** High-performance dashboard featuring custom GLSL shader backgrounds and live telemetry streaming.
 * **Interactive 3D GeoGlobe:** Three.js globe visualizing OSINT targets, active nodes, weather data, and coordinate mapping.
 * **Modular HUD Panels:**
@@ -72,12 +80,12 @@
   * **Focus Panel (Protocol Omega):** Pomodoro tracking, distraction app blocker, and study analytics.
   * **OSINT Hub:** Integrated Shodan, DuckDuckGo, Wikipedia, and DNS reconnaissance streaming.
 
-### 📚 6. Protocol Omega & Scholar Mentor
+### 📚 7. Protocol Omega & Scholar Mentor
 * **Automated Study Sessions:** One-command lock-in mode that auto-plays your Spotify Lo-Fi study playlist, triggers dark ambient themes, and enforces distraction blocking.
 * **Hardcore App Killer:** Detects and immediately terminates blacklisted distraction apps (games, social media) with optional countdown warnings.
 * **Scholar Engine:** Extracts, indexes, and summarizes academic PDFs, research documents, and web briefings into structured markdown notes.
 
-### 💾 7. Dual Memory: Semantic Vector RAG + Knowledge Graph
+### 💾 8. Dual Memory: Semantic Vector RAG + Knowledge Graph
 * **FAISS Vector Search:** Local `sentence-transformers` (`all-MiniLM-L6-v2`) embeddings with SQLite storage for semantic recall of past conversations, preferences, and commands.
 * **Knowledge Graph:** Discovers entities and relationships dynamically from user conversations and links them into an associative graph database (`knowledge_graph.py`).
 
@@ -102,6 +110,9 @@ JARVIS/
 ├── scholar_engine.py          # Academic paper search & PDF research digest
 ├── routine_engine.py          # Scheduled automations & background routines
 ├── telegram_bot.py            # Mobile remote control & incident push uplink
+├── telegram_notifier.py       # Outbound Telegram alerts
+├── desktop_island.py          # Standalone Dynamic Island notch (pywebview)
+├── launch_dynamic_island.bat  # One-click launcher for the notch
 ├── models/                    # Local ONNX biometrics, Piper voices & personas
 │   ├── personas/              # JSON prompt definitions for Alfred, Jarvis, Friday
 │   └── piper/                 # Neural TTS ONNX models and configs
@@ -117,6 +128,8 @@ JARVIS/
     ├── src/
     │   ├── App.tsx            # Main HUD container & WebSocket client
     │   ├── components/
+    │   │   ├── DynamicIsland.tsx # Island HUD (embedded or standalone notch)
+    │   │   ├── ButlerMascot.tsx  # Animated butler mascot
     │   │   ├── GeoGlobe.tsx   # 3D Three.js interactive earth globe
     │   │   ├── SentryDashboard.tsx # Real-time tripwire & security viewer
     │   │   ├── panels/        # System, Focus, OSINT, Weather, Tracker
@@ -172,6 +185,10 @@ ALFRED_USER_LOCATION="Your City, Country"
 TELEGRAM_BOT_TOKEN="your_bot_token"
 TELEGRAM_ALLOWED_USER_ID="your_telegram_id"
 
+# Optional: Gemini (image features: Screen Co-Pilot, Telegram photos, tracker)
+# Leave empty to keep images on-device
+GEMINI_API_KEY=""
+
 # Optional: Spotify Integration
 SPOTIFY_CLIENT_ID="your_spotify_client_id"
 SPOTIFY_CLIENT_SECRET="your_spotify_client_secret"
@@ -223,7 +240,13 @@ npm run dev
 ```
 Open **`http://localhost:5173`** in your browser.
 
-### Option 3: Silent Windows Boot Launcher
+### Option 3: Dynamic Island Notch (standalone)
+```powershell
+.\launch_dynamic_island.bat      # or: python desktop_island.py [--url http://localhost:5173]
+```
+Uses the running backend on `:8000`, or starts it if needed. Requires `pywebview` (in `requirements.txt`).
+
+### Option 4: Silent Windows Boot Launcher
 Add a shortcut of [`start_alfred.bat`](file:///c:/VS%20Code/JARVIS/start_alfred.bat) to `shell:startup` for automatic silent boot with Windows.
 
 ---

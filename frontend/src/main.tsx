@@ -6,6 +6,10 @@ import { installSessionTokenFetch } from './lib/sessionToken'
 
 installSessionTokenFetch()
 
+if (new URLSearchParams(window.location.search).get('mode') === 'island' || window.location.pathname.includes('/island')) {
+  document.documentElement.classList.add('island-mode')
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

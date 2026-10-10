@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import TacticalCore from './components/TacticalCore';
+import ButlerMascot from './components/ButlerMascot';
+import DynamicIsland, { type PendingApproval } from './components/DynamicIsland';
 import SentryDashboard, { type TrackedSubject } from './components/SentryDashboard';
 import ResearchViewer from './components/panels/ResearchViewer';
 import FocusPanel from './components/panels/FocusPanel';
@@ -109,6 +111,56 @@ export function App() {
     secondary_color: "#0284c7"
   });
 
+  // Avatar View Mode (3D Butler or Tactical Arc Core)
+  const [avatarMode, setAvatarMode] = useState<"3d" | "tactical">(() => {
+    try {
+      return localStorage.getItem("alfred_avatar_mode") === "tactical" ? "tactical" : "3d";
+    } catch {
+      return "3d";
+    }
+  });
+
+  // Notch HUD Visibility with localStorage persistence
+  const [islandVisible, setIslandVisible] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("alfred_island_visible");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleIsland = (visible?: boolean) => {
+    setIslandVisible((prev) => {
+      const next = typeof visible === "boolean" ? visible : !prev;
+      try {
+        localStorage.setItem("alfred_island_visible", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  const [approval, setApproval] = useState<PendingApproval | null>(null);
+
+  // Pending risky-tool approval (shown as an Allow / Deny card in the notch)
+  useEffect(() => {
+    fetch('/api/approval')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setApproval(d?.pending ?? null))
+      .catch(() => undefined);
+  }, []);
+
+  const handleSwitchAvatarMode = (mode: "3d" | "tactical") => {
+    setAvatarMode(mode);
+    try {
+      localStorage.setItem("alfred_avatar_mode", mode);
+    } catch {
+      // ignore
+    }
+  };
+
   // Acoustic & Screen Co-Pilot telemetry
   const [acousticActive, setAcousticActive] = useState(false);
   const [acousticStatus, setAcousticStatus] = useState<AcousticStatus | null>(null);
@@ -211,6 +263,8 @@ export function App() {
           applyTheme(p.name, p.color, p.secondary_color);
         } else if (data.type === 'meeting') {
           setMeetingState(data.value);
+        } else if (data.type === 'approval') {
+          setApproval((data.value as PendingApproval | null) ?? null);
         }
       } catch {
         return;
@@ -391,8 +445,47 @@ export function App() {
   // Latest caption text
   const latestCaption = transcript.length > 0 ? transcript[transcript.length - 1].text : "System online and standing by.";
 
+  // Standalone Desktop Island mode check (?mode=island or /island)
+  const isStandaloneIsland = typeof window !== 'undefined' && 
+    (new URLSearchParams(window.location.search).get("mode") === "island" || window.location.pathname.includes("/island"));
+
+  if (isStandaloneIsland) {
+    return (
+      <div className="w-screen h-screen bg-transparent text-zinc-100 overflow-hidden select-none font-sans">
+        <DynamicIsland
+          orbState={orbState}
+          persona={persona}
+          latestTranscript={latestCaption}
+          onSwitchPersona={switchPersona}
+          sentryActive={sentry?.active}
+          approval={approval}
+          standalone={true}
+          onClose={() => {
+            if (window.pywebview?.api?.close) {
+              window.pywebview.api.close();
+            } else {
+              window.close();
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="w-screen h-screen flex flex-col bg-[#08090d] text-zinc-100 overflow-hidden select-none font-sans">
+    <div className="w-screen h-screen flex flex-col bg-[#08090d] text-zinc-100 overflow-hidden select-none font-sans relative">
+      {/* ── TOP DYNAMIC ISLAND HELPER HUD (Omni-present across views) ── */}
+      {islandVisible && (
+        <DynamicIsland
+          orbState={orbState}
+          persona={persona}
+          latestTranscript={latestCaption}
+          onSwitchPersona={switchPersona}
+          sentryActive={sentry?.active}
+          approval={approval}
+          onClose={() => handleToggleIsland(false)}
+        />
+      )}
       
       {/* ── TOP HEADER BAR (Height: 52px, Flat, Zero Gradients, Zero Overlap) ── */}
       <header className="h-[52px] shrink-0 border-b border-[#1c2230] bg-[#0c0e14] px-5 flex items-center justify-between z-30">
@@ -490,6 +583,29 @@ export function App() {
               );
             })}
           </div>
+
+          <div className="w-px h-3.5 bg-[#222838]" />
+
+          {/* Dynamic Island Toggle & Pop-Out Controls */}
+          <button
+            onClick={() => handleToggleIsland()}
+            className={`px-2 py-0.5 text-[9px] font-mono font-bold tracking-wider rounded transition-colors border ${
+              islandVisible
+                ? 'bg-cyan-950/70 border-cyan-500/80 text-cyan-300'
+                : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+            }`}
+            title={islandVisible ? "Notch HUD Active — click to remove/hide" : "Notch HUD Hidden — click to show"}
+          >
+            {islandVisible ? "🏝️ HUD: ON" : "🏝️ HUD: OFF"}
+          </button>
+
+          <button
+            onClick={() => fetch('/api/island/launch', { method: 'POST' }).catch(() => undefined)}
+            className="px-2 py-0.5 text-[9px] font-mono font-bold tracking-wider rounded transition-colors bg-[#121620] border border-[#222838] text-zinc-300 hover:border-cyan-500 hover:text-white"
+            title="Put the Alfred notch on your desktop (top-centre of the screen)"
+          >
+            ↗ DETACH
+          </button>
 
           <div className="w-px h-3.5 bg-[#222838]" />
 
@@ -692,14 +808,63 @@ export function App() {
                 </div>
               </div>
 
-              {/* Precision Vector Tactical Core */}
-              <div className="flex-1 flex items-center justify-center py-4">
-                <TacticalCore
-                  state={orbState}
-                  personaColor={persona.color}
-                  personaName={persona.display_name}
-                  honorific={persona.name === 'friday' ? 'BOSS' : 'SIR'}
-                />
+              {/* Central Multi-Mode Avatar & Core Viewport */}
+              <div className="flex-1 flex flex-col items-center justify-between py-2 relative min-h-0">
+                {/* Avatar Switcher Segmented Control */}
+                <div className="flex items-center gap-1.5 bg-[#0b0e16] border border-[#1e2638] rounded-full px-2.5 py-1 z-10 shadow-lg mt-1">
+                  <button
+                    onClick={() => handleSwitchAvatarMode('3d')}
+                    className={`px-3 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider transition-all flex items-center gap-1.5 ${
+                      avatarMode === '3d'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <span>🎩</span>
+                    <span>BUTLER</span>
+                  </button>
+                  <button
+                    onClick={() => handleSwitchAvatarMode('tactical')}
+                    className={`px-3 py-1 rounded-full text-[10px] font-mono font-bold tracking-wider transition-all flex items-center gap-1.5 ${
+                      avatarMode === 'tactical'
+                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/50 shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <span>🎯</span>
+                    <span>TACTICAL CORE</span>
+                  </button>
+                </div>
+
+                {/* Active Avatar Component Display */}
+                <div className="w-full flex-1 flex items-center justify-center min-h-[360px] relative">
+                  {avatarMode === '3d' && (
+                    <div className="flex flex-col items-center gap-2">
+                      <ButlerMascot
+                        mood={approval ? 'approval' : orbState === 'listening' ? 'listening' : orbState === 'processing' ? 'thinking' : orbState === 'speaking' ? 'talking' : 'idle'}
+                        size={300}
+                        accent={persona.color}
+                        interactive
+                      />
+                      <div className="flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-[#10141f]/95 border border-[#232b3e]">
+                        <span className={`w-2 h-2 rounded-full ${orbState !== 'idle' ? 'animate-pulse' : ''}`} style={{ backgroundColor: persona.color }} />
+                        <span className="text-sm text-zinc-100">{persona.display_name}</span>
+                        <span className="text-zinc-600 text-xs">•</span>
+                        <span className="font-mono text-xs uppercase tracking-wider" style={{ color: persona.color }}>
+                          {orbState === 'idle' ? 'At your service' : orbState}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {avatarMode === 'tactical' && (
+                    <TacticalCore
+                      state={orbState}
+                      personaColor={persona.color}
+                      personaName={persona.display_name}
+                      honorific={persona.name === 'friday' ? 'BOSS' : 'SIR'}
+                    />
+                  )}
+                </div>
               </div>
 
               {/* Bottom Real-time Subtitle & Caption Terminal */}

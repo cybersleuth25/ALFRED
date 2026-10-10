@@ -184,3 +184,28 @@ def test_generate_response_handles_confirmation(gated_tool):
     core_tools.execute_tool("run_terminal_command", {"command": "echo hi"})
     assert llm_engine.generate_response("confirm") == "ran echo hi"
     assert gated_tool == ["echo hi"]
+
+
+def test_approval_endpoint_reports_and_resolves_pending_action(client, web_app, gated_tool):
+    token = {"X-Alfred-Token": web_app.SESSION_TOKEN}
+    assert client.get("/api/approval").json() == {"pending": None}
+
+    core_tools.execute_tool("run_terminal_command", {"command": "echo hi"})
+    pending = client.get("/api/approval").json()["pending"]
+    assert pending["tool"] == "run_terminal_command"
+    assert "echo hi" in pending["summary"]
+
+    res = client.post("/api/approval", json={"decision": "confirm"}, headers=token)
+    assert res.status_code == 200 and res.json()["result"] == "ran echo hi"
+    assert gated_tool == ["echo hi"]
+    assert client.get("/api/approval").json() == {"pending": None}
+
+
+def test_approval_endpoint_needs_token_and_valid_decision(client, web_app, gated_tool):
+    core_tools.execute_tool("run_terminal_command", {"command": "echo hi"})
+    assert client.post("/api/approval", json={"decision": "confirm"}).status_code == 403
+    token = {"X-Alfred-Token": web_app.SESSION_TOKEN}
+    assert client.post("/api/approval", json={"decision": "yolo"}, headers=token).status_code == 400
+    assert client.post("/api/approval", json={"decision": "cancel"}, headers=token).status_code == 200
+    assert client.post("/api/approval", json={"decision": "cancel"}, headers=token).status_code == 409
+    assert gated_tool == []

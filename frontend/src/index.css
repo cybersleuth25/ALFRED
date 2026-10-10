@@ -112,3 +112,10 @@ button {
   0% { transform: translateY(0); }
   100% { transform: translateY(100%); }
 }
+
+/* Desktop notch window (desktop_island.py): only the notch is painted */
+html.island-mode,
+html.island-mode body,
+html.island-mode #root {
+  background: transparent !important;
+}
