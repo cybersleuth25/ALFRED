@@ -15,6 +15,8 @@ from datetime import datetime
 import requests
 import ctypes
 import os
+import threading
+import time
 import subprocess
 import webbrowser
 import urllib.parse
@@ -802,8 +804,12 @@ def learn_new_skill(skill_description: str) -> str:
                         if name in blocklisted:
                             return f"Security check failed: import from module '{name}' is not allowed in dynamic skills."
                 elif isinstance(node, ast.Call):
-                    if isinstance(node.func, ast.Name) and node.func.id in {'eval', 'exec', '__import__'}:
+                    if isinstance(node.func, ast.Name) and node.func.id in {'eval', 'exec', '__import__', 'compile', 'getattr', 'setattr', 'delattr', 'globals', 'locals', 'vars'}:
                         return f"Security check failed: use of built-in function '{node.func.id}' is not allowed in dynamic skills."
+                elif isinstance(node, ast.Attribute) and node.attr.startswith('__'):
+                    return f"Security check failed: dunder attribute access '{node.attr}' is not allowed in dynamic skills."
+                elif isinstance(node, ast.Name) and node.id in {'__builtins__', '__loader__', '__spec__'}:
+                    return f"Security check failed: access to '{node.id}' is not allowed in dynamic skills."
         except SyntaxError as se:
             return f"Syntax validation failed for generated code: {se}"
         
@@ -838,15 +844,22 @@ def make_docker_wrapper(skill_name: str):
         import subprocess, json, os
         sandbox_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Alfred_Workspace", "sandbox_skills")
         cmd = [
-            "docker", "run", "--rm", 
-            "-v", f"{sandbox_dir}:/skills", 
-            "alfred-sandbox", 
+            "docker", "run", "--rm",
+            "--network", os.getenv("ALFRED_SKILL_NETWORK", "bridge"),  # set to "none" to fully air-gap skills
+            "--read-only", "--tmpfs", "/tmp",  # immutable container filesystem
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--memory", "256m", "--cpus", "1", "--pids-limit", "64",
+            "-v", f"{sandbox_dir}:/skills:ro",
+            "alfred-sandbox",
             "python", f"/skills/{skill_name}.py", json.dumps(kwargs)
         ]
         try:
             # Check if docker is installed
-            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
             return res.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return "Error: Skill timed out after 60 seconds inside the sandbox."
         except FileNotFoundError:
             # Docker not installed
             return "Error: Docker is not installed or not running. I cannot safely execute this skill without my sandbox."
@@ -1028,13 +1041,72 @@ try:
 except Exception as e:
     print(f"[Warning] Failed to register community skills: {e}")
 
+# --- Human-in-the-loop gate for destructive / outward-facing tools ---
+# The LLM can be steered by prompt injection (web pages, emails, OSINT results),
+# so these never run without the user explicitly confirming.
+CONFIRMATION_REQUIRED_TOOLS = {
+    "run_terminal_command", "delete_file", "git_smart_commit", "clean_dev_workspace",
+    "shutdown_pc", "learn_new_skill", "install_community_skill", "clear_all_memories",
+    "delete_calendar_event", "send_whatsapp",
+}
+CONFIRM_WORDS = {"confirm", "yes confirm", "confirm it", "proceed", "yes proceed", "do it", "approved"}
+CANCEL_WORDS = {"cancel", "no", "abort", "don't", "do not", "stop"}
+_PENDING_TTL_SECONDS = 120
+_pending_action = None  # (tool_name, kwargs, created_at)
+_pending_lock = threading.Lock()
+
+
+def _describe_call(tool_name: str, kwargs: dict) -> str:
+    args = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+    return f"{tool_name}({args})"
+
+
+def has_pending_action() -> bool:
+    with _pending_lock:
+        return _pending_action is not None and time.time() - _pending_action[2] < _PENDING_TTL_SECONDS
+
+
+def handle_confirmation_reply(text: str):
+    """If a gated action is pending and `text` confirms/cancels it, act and return a reply; else None."""
+    global _pending_action
+    reply = text.lower().strip().rstrip(".!")
+    with _pending_lock:
+        pending = _pending_action
+        if pending is None or time.time() - pending[2] >= _PENDING_TTL_SECONDS:
+            _pending_action = None
+            return None
+        if reply in CONFIRM_WORDS:
+            _pending_action = None
+        elif reply in CANCEL_WORDS:
+            _pending_action = None
+            return f"Cancelled: {_describe_call(pending[0], pending[1])}."
+        else:
+            return None
+    return _run_tool(pending[0], pending[1])
+
+
+def _run_tool(tool_name: str, kwargs: dict) -> str:
+    try:
+        return TOOL_REGISTRY[tool_name](**kwargs)
+    except Exception as e:
+        return f"Error executing '{tool_name}': {e}"
+
+
 def execute_tool(tool_name: str, kwargs: dict) -> str:
     """
     Dynamically executes a tool based on the string name from the LLM.
+    Tools in CONFIRMATION_REQUIRED_TOOLS are parked until the user says "confirm".
     """
+    global _pending_action
     if tool_name not in TOOL_REGISTRY:
         return f"Error: Tool '{tool_name}' not found."
-    
+
+    if tool_name in CONFIRMATION_REQUIRED_TOOLS:
+        with _pending_lock:
+            _pending_action = (tool_name, dict(kwargs), time.time())
+        return (f"CONFIRMATION REQUIRED: I need your approval to run {_describe_call(tool_name, kwargs)}. "
+                f"Say 'confirm' to proceed or 'cancel' to abort.")
+
     try:
         # Call the tool with the mapped arguments
         func = TOOL_REGISTRY[tool_name]

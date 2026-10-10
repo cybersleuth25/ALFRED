@@ -9,9 +9,60 @@ except ImportError:
 
 load_dotenv()
 
-# Global Event Queue for Server-Sent Events (SSE)
+import threading
+
+
+class EventBroadcaster:
+    """Fan-out event bus: every subscriber (SSE client) gets its own copy of each event.
+
+    Also behaves like a queue (put/get/get_nowait/empty) via a built-in default
+    subscriber, so existing `event_queue.put(...)` callers keep working.
+    """
+
+    def __init__(self, maxsize: int = 1000):
+        self._maxsize = maxsize
+        self._subscribers = []
+        self._lock = threading.Lock()
+        self._default = queue.Queue(maxsize=maxsize)
+
+    def subscribe(self) -> queue.Queue:
+        q = queue.Queue(maxsize=self._maxsize)
+        with self._lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: queue.Queue):
+        with self._lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+    def put(self, event):
+        with self._lock:
+            targets = [self._default] + list(self._subscribers)
+        for q in targets:
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                # Slow/dead consumer: drop its oldest event rather than block producers
+                try:
+                    q.get_nowait()
+                    q.put_nowait(event)
+                except (queue.Empty, queue.Full):
+                    pass
+
+    def get(self, block=True, timeout=None):
+        return self._default.get(block, timeout)
+
+    def get_nowait(self):
+        return self._default.get_nowait()
+
+    def empty(self):
+        return self._default.empty()
+
+
+# Global event bus for Server-Sent Events (SSE)
 # Messages map to: {"type": "state", "value": "listening"} or {"type": "transcript", "value": "text", "author": "System"}
-event_queue = queue.Queue()
+event_queue = EventBroadcaster()
 
 # Global State Variables
 focus_mode_active = False

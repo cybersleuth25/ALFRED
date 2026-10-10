@@ -349,20 +349,33 @@ def clean_dev_workspace(root_dir: str = "") -> str:
 
 # ── 4. Safe Terminal Execution ──
 
-BLOCKED_COMMANDS = {
-    "rmdir /s /q c:", "del /f /s /q c:", "format", "diskpart",
-    ":(){ :|:& };:", "mkfs", "dd if="
-}
+# Last-resort backstop only — the real control is the user-confirmation gate in
+# core_tools.execute_tool. Patterns match whole commands, not substrings, so
+# e.g. `git log --format=...` is no longer blocked.
+BLOCKED_COMMAND_PATTERNS = [
+    re.compile(r"(^|[;&|]\s*)format(\.com)?\s+[a-z]:", re.I),
+    re.compile(r"\bdiskpart\b", re.I),
+    re.compile(r"\bmkfs(\.\w+)?\b", re.I),
+    re.compile(r"\bdd\s+if=", re.I),
+    re.compile(r":\(\)\s*\{\s*:\|:&\s*\};:"),
+    # Recursive deletes aimed at a drive root, Windows dir or user profile
+    re.compile(r"\b(rd|rmdir|del|erase|rm|remove-item)\b[^\n]*\s[\"']?([a-z]:\\?|/|~|%userprofile%|\$env:userprofile|c:\\windows|c:\\users)[\"']?\s*$", re.I),
+    re.compile(r"\b(reg\s+delete|bcdedit|vssadmin\s+delete|cipher\s+/w)\b", re.I),
+]
+
+
+def _is_blocked_command(command: str) -> bool:
+    return any(p.search(command.strip()) for p in BLOCKED_COMMAND_PATTERNS)
+
 
 def run_terminal_command(command: str, cwd: str = "") -> str:
     """
-    Executes a shell or terminal command safely with a 30s timeout.
+    Executes a shell or terminal command with a 30s timeout.
     Useful for running tests, build scripts, npm, pip, git, and python commands.
+    Only reachable after explicit user confirmation (see core_tools.execute_tool).
     """
-    cmd_lower = command.lower().strip()
-    for blocked in BLOCKED_COMMANDS:
-        if blocked in cmd_lower:
-            return f"Error: Command '{command}' was blocked by Alfred's security sandbox."
+    if _is_blocked_command(command):
+        return f"Error: Command '{command}' was blocked by Alfred's security sandbox."
 
     target_cwd = str(_resolve_repo(cwd))
     try:
