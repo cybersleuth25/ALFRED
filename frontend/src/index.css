@@ -118,4 +118,5 @@ html.island-mode,
 html.island-mode body,
 html.island-mode #root {
   background: transparent !important;
+  overflow: hidden !important; /* the desktop window is sized to the island; never scroll */
 }

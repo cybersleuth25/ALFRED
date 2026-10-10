@@ -14,6 +14,7 @@ export interface PendingApproval {
   tool: string;
   summary: string;
   expires_in: number;
+  can_always?: boolean;
 }
 
 export interface DynamicIslandProps {
@@ -123,6 +124,28 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
       return false;
     }
   });
+
+  // Open on hover (Coucou's "Open on hover"): resting on the notch opens it; it folds
+  // shortly after the pointer leaves unless you clicked inside.
+  const [openOnHover, setOpenOnHover] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("alfred_notch_open_on_hover") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const hoverOpened = useRef(false);
+  const [trusted, setTrusted] = useState(0);
+  const toggleOpenOnHover = () => {
+    setOpenOnHover((prev) => {
+      try {
+        localStorage.setItem("alfred_notch_open_on_hover", String(!prev));
+      } catch {
+        // storage unavailable; setting lasts for this session
+      }
+      return !prev;
+    });
+  };
 
   const toggleIdleCapsule = () => {
     setIdleCapsule((prev) => {
@@ -313,11 +336,30 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   const onEnter = () => {
     window.clearTimeout(leaveTimer.current);
     setHovered(true);
+    if (openOnHover && !open) {
+      hoverOpened.current = true;
+      setOpen(true);
+    }
   };
   const onLeave = () => {
     window.clearTimeout(leaveTimer.current);
-    leaveTimer.current = window.setTimeout(() => setHovered(false), 550);
+    leaveTimer.current = window.setTimeout(() => {
+      setHovered(false);
+      if (hoverOpened.current) {
+        hoverOpened.current = false;
+        setOpen(false);
+      }
+    }, openOnHover ? 650 : 550);
   };
+
+  // How many commands are trusted with "Always" (shown so they can be forgotten)
+  useEffect(() => {
+    if (mode !== "expanded") return;
+    fetch("/api/approval")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setTrusted(d?.trusted ?? 0))
+      .catch(() => undefined);
+  }, [mode, approval]);
 
   // ── Actions ──
   const post = (url: string, body: unknown) =>
@@ -339,7 +381,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
     }
   };
 
-  const decide = async (decision: "confirm" | "cancel") => {
+  const decide = async (decision: "confirm" | "cancel" | "always") => {
     setBusy(decision);
     try {
       const d = await (await post("/api/approval", { decision })).json();
@@ -408,6 +450,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
           cursor: mode === "compact" ? "pointer" : "default",
         }}
         onClick={() => mode === "compact" && setOpen(true)}
+        onPointerDownCapture={() => {
+          hoverOpened.current = false; // clicking inside keeps a hover-opened notch open
+        }}
       >
         <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: "inherit" }}>
           {/* ── Compact ── */}
@@ -453,6 +498,28 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
                       style={{ background: p.col, boxShadow: persona.name === p.id ? `0 0 0 2px #000, 0 0 0 3.5px ${p.col}` : "none", opacity: persona.name === p.id ? 1 : 0.45 }}
                     />
                   ))}
+                  {trusted > 0 && (
+                    <button
+                      className="round ml-1 !w-auto px-2 text-[10px]"
+                      title={`${trusted} command(s) trusted with "Always" — click to forget them`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        post("/api/approval/forget", {}).then(() => setTrusted(0));
+                      }}
+                    >
+                      🔓 {trusted}
+                    </button>
+                  )}
+                  <button
+                    className={`round ml-1 ${openOnHover ? "!text-cyan-300 !border-cyan-500/50" : ""}`}
+                    title={openOnHover ? "Opens on hover (click to require a click)" : "Opens on click (click to open on hover)"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleOpenOnHover();
+                    }}
+                  >
+                    {openOnHover ? "◉" : "○"}
+                  </button>
                   <button
                     className="round ml-1 hover:!text-rose-400 hover:!border-rose-400/40"
                     title="Remove / Hide Notch"
@@ -538,6 +605,16 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
                 <button className="pill primary flex-1 justify-center" disabled={!!busy} onClick={() => decide("confirm")}>
                   {busy === "confirm" ? "Running…" : "Allow"}
                 </button>
+                {approval?.can_always && (
+                  <button
+                    className="pill justify-center"
+                    disabled={!!busy}
+                    title="Allow now and never ask again for this exact command"
+                    onClick={() => decide("always")}
+                  >
+                    {busy === "always" ? "Running…" : "Always"}
+                  </button>
+                )}
                 <button className="pill flex-1 justify-center" disabled={!!busy} onClick={() => decide("cancel")}>
                   Deny
                 </button>

@@ -1,4 +1,29 @@
 import os
+import sys
+
+# ── Startup guard (runs before any heavy import) ──
+# 1. Always run on the project venv, where the dependencies live.
+# 2. Only one backend at a time: a second launch opens the running one instead.
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_instance_mutex = None
+if __name__ == '__main__':
+    _venv_dir = os.path.join(_ROOT, 'venv')
+    if os.path.isdir(_venv_dir) and os.path.normcase(os.path.abspath(sys.prefix)) != os.path.normcase(_venv_dir):
+        _exe = 'pythonw.exe' if sys.executable.lower().endswith('pythonw.exe') else 'python.exe'
+        import subprocess
+        print(f"[System] Not running from the project venv ({sys.executable}); relaunching with venv\\Scripts\\{_exe}...")
+        sys.exit(subprocess.call([os.path.join(_venv_dir, 'Scripts', _exe), os.path.abspath(__file__), *sys.argv[1:]]))
+
+    if sys.platform == 'win32':
+        import ctypes
+        _k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        _instance_mutex = _k32.CreateMutexW(None, False, "Local\\AlfredBackend")
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            print("[System] Alfred is already running; opening it instead of starting a second copy.")
+            import webbrowser
+            webbrowser.open("http://127.0.0.1:8000")
+            sys.exit(0)
+
 import json
 import asyncio
 import threading
@@ -925,7 +950,14 @@ async def api_island_launch():
 async def api_approval_status():
     """Pending risky tool call awaiting the user's Allow / Deny (shown in the notch)."""
     from tools import core_tools
-    return JSONResponse({"pending": core_tools.pending_action_info()})
+    return JSONResponse({"pending": core_tools.pending_action_info(), "trusted": core_tools.always_allowed_count()})
+
+@app.post('/api/approval/forget')
+async def api_approval_forget():
+    """Clears every command trusted with "Always"."""
+    from tools import core_tools
+    core_tools.forget_always_allowed()
+    return JSONResponse({"success": True})
 
 @app.post('/api/approval')
 async def api_approval_decide(req: Request):
@@ -933,9 +965,12 @@ async def api_approval_decide(req: Request):
     from tools import core_tools
     data = await req.json()
     decision = data.get("decision")
-    if decision not in ("confirm", "cancel"):
-        return JSONResponse({"error": "decision must be 'confirm' or 'cancel'"}, status_code=400)
-    result = await asyncio.to_thread(core_tools.handle_confirmation_reply, decision)
+    if decision not in ("confirm", "cancel", "always"):
+        return JSONResponse({"error": "decision must be 'confirm', 'cancel' or 'always'"}, status_code=400)
+    if decision == "always":
+        result = await asyncio.to_thread(core_tools.allow_pending_always)
+    else:
+        result = await asyncio.to_thread(core_tools.handle_confirmation_reply, decision)
     if result is None:
         return JSONResponse({"error": "Nothing pending"}, status_code=409)
     shared.push_log(str(result), author="System")

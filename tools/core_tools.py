@@ -1055,6 +1055,33 @@ _PENDING_TTL_SECONDS = 120
 _pending_action = None  # (tool_name, kwargs, created_at)
 _pending_lock = threading.RLock()  # re-entrant: _announce_pending reads state while held
 
+# "Always allow": exact calls the user has trusted from the notch. Only low-blast-radius
+# tools are eligible — never shutdown, memory wipes, deletions or new code/skills.
+ALWAYS_ELIGIBLE_TOOLS = {"run_terminal_command", "git_smart_commit", "clean_dev_workspace"}
+_ALWAYS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Alfred_Workspace", "always_allowed.json")
+
+
+def _load_always() -> set:
+    try:
+        with open(_ALWAYS_FILE, encoding="utf-8") as f:
+            return set(_json.load(f))
+    except Exception:
+        return set()
+
+
+def _save_always(items: set):
+    os.makedirs(os.path.dirname(_ALWAYS_FILE), exist_ok=True)
+    with open(_ALWAYS_FILE, "w", encoding="utf-8") as f:
+        _json.dump(sorted(items), f, indent=2)
+
+
+def always_allowed_count() -> int:
+    return len(_load_always())
+
+
+def forget_always_allowed():
+    _save_always(set())
+
 
 def _describe_call(tool_name: str, kwargs: dict) -> str:
     args = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
@@ -1076,6 +1103,7 @@ def pending_action_info():
             "tool": tool_name,
             "summary": _describe_call(tool_name, kwargs),
             "expires_in": int(_PENDING_TTL_SECONDS - (time.time() - created)),
+            "can_always": tool_name in ALWAYS_ELIGIBLE_TOOLS,
         }
 
 
@@ -1108,6 +1136,21 @@ def handle_confirmation_reply(text: str):
     return _run_tool(pending[0], pending[1])
 
 
+def allow_pending_always():
+    """Runs the pending call and trusts that exact call from now on. None if nothing eligible is pending."""
+    global _pending_action
+    with _pending_lock:
+        pending = _pending_action
+        if pending is None or time.time() - pending[2] >= _PENDING_TTL_SECONDS or pending[0] not in ALWAYS_ELIGIBLE_TOOLS:
+            return None
+        _pending_action = None
+        trusted = _load_always()
+        trusted.add(_describe_call(pending[0], pending[1]))
+        _save_always(trusted)
+    _announce_pending()
+    return _run_tool(pending[0], pending[1])
+
+
 def _run_tool(tool_name: str, kwargs: dict) -> str:
     try:
         return TOOL_REGISTRY[tool_name](**kwargs)
@@ -1125,6 +1168,8 @@ def execute_tool(tool_name: str, kwargs: dict) -> str:
         return f"Error: Tool '{tool_name}' not found."
 
     if tool_name in CONFIRMATION_REQUIRED_TOOLS:
+        if tool_name in ALWAYS_ELIGIBLE_TOOLS and _describe_call(tool_name, kwargs) in _load_always():
+            return _run_tool(tool_name, kwargs)
         with _pending_lock:
             _pending_action = (tool_name, dict(kwargs), time.time())
         _announce_pending()
